@@ -19,6 +19,56 @@ cd AgapShift
 flutter pub get
 ```
 
+## Git: pull the latest code
+
+From your project folder (after you have cloned once):
+
+```bash
+cd AgapShift
+git fetch origin
+git checkout feature/agapshift-mvp
+git pull origin feature/agapshift-mvp
+flutter pub get
+```
+
+- Replace `feature/agapshift-mvp` with whatever branch you use (e.g. `main` once you merge).
+- If you only care about the current branch and it already tracks `origin`:
+
+```bash
+git pull
+flutter pub get
+```
+
+## Git: push your changes to GitHub
+
+1. **Configure the remote** (only needed once per clone; skip if `git remote -v` already shows your repo):
+
+   ```bash
+   git remote add origin https://github.com/Siom4ii/AgapShift.git
+   ```
+
+2. **Create or switch to a branch** (example: feature branch):
+
+   ```bash
+   git checkout -b feature/agapshift-mvp
+   ```
+
+3. **Stage, commit, and push**:
+
+   ```bash
+   git status
+   git add -A
+   git commit -m "Describe your change in one line"
+   git push -u origin feature/agapshift-mvp
+   ```
+
+   The first push uses `-u` so later you can run just `git push`.
+
+4. **Authentication**: GitHub no longer accepts account passwords for Git over HTTPS. Use one of:
+   - [Personal Access Token (classic)](https://github.com/settings/tokens) as the password when Git asks, or  
+   - [GitHub CLI](https://cli.github.com/) (`gh auth login`), or  
+   - SSH remotes (`git@github.com:Siom4ii/AgapShift.git`) with an SSH key added to your GitHub account.
+
 ## Run the app
 
 ### Web (quick preview)
