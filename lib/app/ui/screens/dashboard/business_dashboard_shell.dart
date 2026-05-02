@@ -1,22 +1,26 @@
 import 'package:flutter/material.dart';
 
-import '../../../../domain/enums.dart';
-import '../../../marketplace/mock_marketplace_repository.dart';
+import '../../../marketplace/marketplace_repository.dart';
 import '../../../notifications/mock_notification_repository.dart';
 import '../../../payments/mock_payments_repository.dart';
-import '../../../ratings/mock_ratings_repository.dart';
 import '../../../session/session_controller.dart';
 import '../../../shift/mock_shift_repository.dart';
+import '../../../ratings/mock_ratings_repository.dart';
 import '../marketplace/business_create_gig_screen.dart';
-import '../marketplace/business_gigs_screen.dart';
 import '../notifications/notifications_screen.dart';
 import '../profile/business_profile_screen.dart';
+import '../wallet/business_wallet_screen.dart';
+import '../../widgets/business_shell_bottom_nav.dart';
+import '../../widgets/locked_action.dart';
+import '../../widgets/shell_tab_transition.dart';
+import '../../widgets/verification_banner.dart';
+import 'business_find_workers_screen.dart';
+import 'business_home_screen.dart';
 
 class BusinessDashboardShell extends StatefulWidget {
   const BusinessDashboardShell({
     super.key,
     required this.onSignOut,
-    required this.onDebugSetStatus,
     required this.repo,
     required this.notifications,
     required this.payments,
@@ -26,8 +30,7 @@ class BusinessDashboardShell extends StatefulWidget {
   });
 
   final Future<void> Function() onSignOut;
-  final Future<void> Function(AccountStatus status) onDebugSetStatus;
-  final MockMarketplaceRepository repo;
+  final MarketplaceRepository repo;
   final MockNotificationRepository notifications;
   final MockPaymentsRepository payments;
   final MockShiftRepository shift;
@@ -39,116 +42,97 @@ class BusinessDashboardShell extends StatefulWidget {
 }
 
 class _BusinessDashboardShellState extends State<BusinessDashboardShell> {
-  int _index = 0;
+  /// 0 Home, 1 Workers, 2 Wallet, 3 Profile
+  int _contentIndex = 0;
+  bool _verificationPopupShown = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || _verificationPopupShown) return;
+      _verificationPopupShown = true;
+      await showVerificationReviewDialog(context, session: widget.session);
+    });
+  }
+
+  Future<void> _openNotifications() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => NotificationsScreen(
+          repo: widget.notifications,
+          session: widget.session,
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openPostJob() async {
+    if (!canPerformVerifiedAction(widget.session)) {
+      await showLockedFeatureDialog(
+        context,
+        session: widget.session,
+        featureName: 'Posting jobs',
+      );
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => BusinessCreateGigScreen(
+          repo: widget.repo,
+          session: widget.session,
+          onCreated: () async {
+            if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+            setState(() => _contentIndex = 0);
+          },
+        ),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
-    final screen = switch (_index) {
-      0 => BusinessCreateGigScreen(
-          repo: widget.repo,
-          session: widget.session,
-          onCreated: () async => setState(() => _index = 1),
-        ),
-      1 => BusinessGigsScreen(
-          repo: widget.repo,
-          notifications: widget.notifications,
-          payments: widget.payments,
-          shiftRepo: widget.shift,
-          session: widget.session,
-        ),
-      2 => const _Placeholder(title: 'Workers', body: 'Nearby worker discovery comes next.'),
+    final screen = switch (_contentIndex) {
+      0 => BusinessHomeScreen(
+        repo: widget.repo,
+        session: widget.session,
+        notifications: widget.notifications,
+        payments: widget.payments,
+        onPostJob: _openPostJob,
+        onFindWorkers: () => setState(() => _contentIndex = 1),
+        onOpenWallet: () => setState(() => _contentIndex = 2),
+        onOpenNotifications: _openNotifications,
+      ),
+      1 => BusinessFindWorkersScreen(onOpenNotifications: _openNotifications),
+      2 => BusinessWalletScreen(onOpenNotifications: _openNotifications),
       _ => BusinessProfileScreen(
-          session: widget.session,
-          marketRepo: widget.repo,
-          ratings: widget.ratings,
-        ),
+        session: widget.session,
+        marketRepo: widget.repo,
+        ratings: widget.ratings,
+        embedded: true,
+        showFollowFab: false,
+        onLogout: widget.onSignOut,
+        onOpenNotifications: _openNotifications,
+      ),
     };
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Business'),
-        actions: [
-          IconButton(
-            tooltip: 'Notifications',
-            onPressed: () async {
-              await Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => NotificationsScreen(
-                    repo: widget.notifications,
-                    session: widget.session,
-                  ),
-                ),
-              );
-            },
-            icon: const Icon(Icons.notifications_outlined),
+      backgroundColor: Colors.white,
+      body: SafeArea(
+        bottom: false,
+        child: ColoredBox(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          child: ShellTabTransition(
+            tabIndex: _contentIndex,
+            child: screen,
           ),
-          PopupMenuButton<AccountStatus>(
-            tooltip: 'Debug status',
-            onSelected: (s) async => widget.onDebugSetStatus(s),
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: AccountStatus.verified, child: Text('Set Verified')),
-              PopupMenuItem(value: AccountStatus.pendingVerification, child: Text('Set Pending')),
-              PopupMenuItem(value: AccountStatus.rejected, child: Text('Set Rejected')),
-              PopupMenuItem(value: AccountStatus.suspended, child: Text('Set Suspended')),
-            ],
-          ),
-          PopupMenuButton<_UserMenu>(
-            tooltip: 'Menu',
-            itemBuilder: (context) => const [
-              PopupMenuItem(
-                value: _UserMenu.logout,
-                child: Row(
-                  children: [
-                    Icon(Icons.logout_rounded),
-                    SizedBox(width: 10),
-                    Text('Logout'),
-                  ],
-                ),
-              ),
-            ],
-            onSelected: (v) async {
-              if (v == _UserMenu.logout) await widget.onSignOut();
-            },
-          ),
-        ],
-      ),
-      body: screen,
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
-        destinations: const [
-          NavigationDestination(icon: Icon(Icons.add_box_outlined), label: 'Post'),
-          NavigationDestination(icon: Icon(Icons.list_alt), label: 'Gigs'),
-          NavigationDestination(icon: Icon(Icons.people_alt_outlined), label: 'Workers'),
-          NavigationDestination(icon: Icon(Icons.person), label: 'Profile'),
-        ],
-      ),
-    );
-  }
-}
-
-enum _UserMenu { logout }
-
-class _Placeholder extends StatelessWidget {
-  const _Placeholder({required this.title, required this.body});
-  final String title;
-  final String body;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(title, style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 8),
-            Text(body, textAlign: TextAlign.center),
-          ],
         ),
       ),
+      bottomNavigationBar: BusinessShellBottomNav(
+        contentIndex: _contentIndex,
+        onContentIndex: (i) => setState(() => _contentIndex = i),
+        onPostJob: _openPostJob,
+      ),
     );
   }
 }
-

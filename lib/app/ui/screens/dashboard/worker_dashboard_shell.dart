@@ -1,17 +1,22 @@
 import 'package:flutter/material.dart';
 
 import '../../../../domain/enums.dart';
-import '../../../marketplace/mock_marketplace_repository.dart';
+import '../../../marketplace/marketplace_repository.dart';
 import '../../../notifications/mock_notification_repository.dart';
 import '../../../payments/mock_payments_repository.dart';
 import '../../../session/session_controller.dart';
 import '../../../shift/mock_shift_repository.dart';
 import '../../../ratings/mock_ratings_repository.dart';
 import '../marketplace/worker_gigs_screen.dart';
+import '../marketplace/worker_find_jobs_screen.dart';
 import '../notifications/notifications_screen.dart';
 import '../profile/worker_profile_screen.dart';
 import '../shift/worker_shift_screen.dart';
 import '../wallet/wallet_screen.dart';
+import '../../widgets/agap_app_bar.dart';
+import '../../widgets/agap_shell_nav.dart';
+import '../../widgets/shell_tab_transition.dart';
+import '../../widgets/verification_banner.dart';
 
 class WorkerDashboardShell extends StatefulWidget {
   const WorkerDashboardShell({
@@ -28,7 +33,7 @@ class WorkerDashboardShell extends StatefulWidget {
 
   final Future<void> Function() onSignOut;
   final Future<void> Function(AccountStatus status) onDebugSetStatus;
-  final MockMarketplaceRepository repo;
+  final MarketplaceRepository repo;
   final MockNotificationRepository notifications;
   final MockPaymentsRepository payments;
   final MockShiftRepository shift;
@@ -41,6 +46,18 @@ class WorkerDashboardShell extends StatefulWidget {
 
 class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
   int _index = 0;
+  bool _verificationPopupShown = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Show the "under review" popup once per shell mount for unverified users.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted || _verificationPopupShown) return;
+      _verificationPopupShown = true;
+      await showVerificationReviewDialog(context, session: widget.session);
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -50,38 +67,43 @@ class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
           notifications: widget.notifications,
           session: widget.session,
         ),
-      1 => WorkerShiftScreen(
+      1 => WorkerFindJobsScreen(
+          repo: widget.repo,
+          notifications: widget.notifications,
+          session: widget.session,
+        ),
+      2 => WorkerShiftScreen(
           marketRepo: widget.repo,
           shiftRepo: widget.shift,
           payments: widget.payments,
           session: widget.session,
+          showAppBar: false,
         ),
-      2 => WalletScreen(payments: widget.payments, session: widget.session),
+      3 => WalletScreen(payments: widget.payments, session: widget.session, embedded: true),
       _ => WorkerProfileScreen(
           session: widget.session,
           shiftRepo: widget.shift,
           ratings: widget.ratings,
+          embedded: true,
         ),
     };
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Worker'),
-        actions: [
-          IconButton(
-            tooltip: 'Notifications',
-            onPressed: () async {
-              await Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => NotificationsScreen(
-                    repo: widget.notifications,
-                    session: widget.session,
-                  ),
-                ),
-              );
-            },
-            icon: const Icon(Icons.notifications_outlined),
-          ),
+      backgroundColor: Colors.white,
+      appBar: AgapAppBar(
+        avatar: agapRoleAvatar(isBusiness: false),
+        onSearchTap: null,
+        onNotificationTap: () async {
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => NotificationsScreen(
+                repo: widget.notifications,
+                session: widget.session,
+              ),
+            ),
+          );
+        },
+        extraActions: [
           PopupMenuButton<AccountStatus>(
             tooltip: 'Debug status',
             onSelected: (s) async => widget.onDebugSetStatus(s),
@@ -112,15 +134,42 @@ class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
           ),
         ],
       ),
-      body: screen,
-      bottomNavigationBar: NavigationBar(
+      body: ColoredBox(
+        color: Theme.of(context).scaffoldBackgroundColor,
+        child: ShellTabTransition(
+          tabIndex: _index,
+          child: screen,
+        ),
+      ),
+      bottomNavigationBar: AgapShellNavBar(
         selectedIndex: _index,
-        onDestinationSelected: (i) => setState(() => _index = i),
+        onSelect: (i) => setState(() => _index = i),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.search), label: 'Gigs'),
-          NavigationDestination(icon: Icon(Icons.assignment), label: 'Shifts'),
-          NavigationDestination(icon: Icon(Icons.account_balance_wallet), label: 'Wallet'),
-          NavigationDestination(icon: Icon(Icons.person), label: 'Profile'),
+          AgapShellDestination(
+            icon: Icons.map_outlined,
+            selectedIcon: Icons.map_rounded,
+            label: 'Home',
+          ),
+          AgapShellDestination(
+            icon: Icons.search_rounded,
+            selectedIcon: Icons.search_rounded,
+            label: 'Find Jobs',
+          ),
+          AgapShellDestination(
+            icon: Icons.event_note_outlined,
+            selectedIcon: Icons.event_note_rounded,
+            label: 'My Shift',
+          ),
+          AgapShellDestination(
+            icon: Icons.account_balance_wallet_outlined,
+            selectedIcon: Icons.account_balance_wallet_rounded,
+            label: 'Wallet',
+          ),
+          AgapShellDestination(
+            icon: Icons.person_outline_rounded,
+            selectedIcon: Icons.person_rounded,
+            label: 'Profile',
+          ),
         ],
       ),
     );
@@ -128,27 +177,3 @@ class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
 }
 
 enum _UserMenu { logout }
-
-class _Placeholder extends StatelessWidget {
-  const _Placeholder({required this.title, required this.body});
-  final String title;
-  final String body;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(title, style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 8),
-            Text(body, textAlign: TextAlign.center),
-          ],
-        ),
-      ),
-    );
-  }
-}
-

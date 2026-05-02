@@ -1,8 +1,9 @@
 import 'package:flutter/foundation.dart';
 
 import '../../domain/models.dart';
+import '../session/app_actor_id.dart';
 import '../session/session_controller.dart';
-import 'mock_marketplace_repository.dart';
+import 'marketplace_repository.dart';
 
 class MarketplaceController extends ChangeNotifier {
   MarketplaceController({
@@ -10,7 +11,7 @@ class MarketplaceController extends ChangeNotifier {
     required this.session,
   });
 
-  final MockMarketplaceRepository repo;
+  final MarketplaceRepository repo;
   final SessionController session;
 
   List<Gig> _nearby = const [];
@@ -35,7 +36,7 @@ class MarketplaceController extends ChangeNotifier {
   }
 
   Future<void> refreshBusinessGigs() async {
-    final businessId = session.state.email ?? 'business';
+    final businessId = appActorId(session, mockFallback: 'business');
     final all = await repo.listGigs();
     _businessGigs = all.where((g) => g.businessId == businessId).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));

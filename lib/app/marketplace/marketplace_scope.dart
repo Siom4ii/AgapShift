@@ -6,7 +6,10 @@ import '../ratings/mock_ratings_repository.dart';
 import '../session/session_controller.dart';
 import '../shift/mock_shift_repository.dart';
 import '../storage/kv_store.dart';
+import '../supabase/supabase_config.dart';
+import 'marketplace_repository.dart';
 import 'mock_marketplace_repository.dart';
+import 'supabase_marketplace_repository.dart';
 
 class MarketplaceScope extends InheritedWidget {
   const MarketplaceScope({
@@ -20,7 +23,7 @@ class MarketplaceScope extends InheritedWidget {
     required super.child,
   });
 
-  final MockMarketplaceRepository repo;
+  final MarketplaceRepository repo;
   final MockNotificationRepository notifications;
   final MockPaymentsRepository payments;
   final MockRatingsRepository ratings;
@@ -39,7 +42,9 @@ class MarketplaceScope extends InheritedWidget {
     required Widget child,
   }) {
     return MarketplaceScope(
-      repo: MockMarketplaceRepository(store),
+      repo: SupabaseConfig.isConfigured
+          ? SupabaseMarketplaceRepository()
+          : MockMarketplaceRepository(store),
       notifications: MockNotificationRepository(store),
       payments: MockPaymentsRepository(store),
       ratings: MockRatingsRepository(store),

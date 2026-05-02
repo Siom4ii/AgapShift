@@ -3,8 +3,9 @@ import 'package:flutter/material.dart';
 import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
 import '../../../notifications/mock_notification_repository.dart';
-import '../../../marketplace/mock_marketplace_repository.dart';
+import '../../../marketplace/marketplace_repository.dart';
 import '../../../payments/mock_payments_repository.dart';
+import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 
 class BusinessGigApplicantsScreen extends StatefulWidget {
@@ -17,7 +18,7 @@ class BusinessGigApplicantsScreen extends StatefulWidget {
     required this.gig,
   });
 
-  final MockMarketplaceRepository repo;
+  final MarketplaceRepository repo;
   final MockNotificationRepository notifications;
   final MockPaymentsRepository payments;
   final SessionController session;
@@ -57,7 +58,7 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
   }
 
   Future<void> _hire(GigApplication a) async {
-    final businessId = widget.session.state.email ?? 'business';
+    final businessId = appActorId(widget.session, mockFallback: 'business');
     try {
       final escrowFunded = await widget.payments.isEscrowFunded(widget.gig.id);
       if (!escrowFunded) {
@@ -100,7 +101,7 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
   }
 
   Future<void> _fundEscrow() async {
-    final businessId = widget.session.state.email ?? 'business';
+    final businessId = appActorId(widget.session, mockFallback: 'business');
     try {
       await widget.payments.fundEscrow(
         gigId: widget.gig.id,

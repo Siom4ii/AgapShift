@@ -1,15 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import 'agap_colors.dart';
+
 class AgapTheme {
   static ThemeData light() {
-    const seed = Color(0xFF2E7D32);
-    final scheme = ColorScheme.fromSeed(seedColor: seed, brightness: Brightness.light);
+    final scheme = ColorScheme.fromSeed(seedColor: AgapColors.primary, brightness: Brightness.light);
 
     final base = ThemeData(
       useMaterial3: true,
       colorScheme: scheme,
       visualDensity: VisualDensity.standard,
+      scaffoldBackgroundColor: AgapColors.pageBackground,
     );
 
     return base.copyWith(
@@ -21,14 +23,21 @@ class AgapTheme {
       ),
       appBarTheme: AppBarTheme(
         centerTitle: false,
-        backgroundColor: scheme.surface,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        backgroundColor: Colors.white,
         foregroundColor: scheme.onSurface,
+        surfaceTintColor: Colors.transparent,
       ),
       cardTheme: CardThemeData(
         elevation: 0,
-        color: scheme.surface,
-        surfaceTintColor: scheme.surfaceTint,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        color: Colors.white,
+        surfaceTintColor: Colors.transparent,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: AgapColors.borderSubtle),
+        ),
+        shadowColor: Colors.black.withValues(alpha: 0.06),
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
@@ -52,10 +61,13 @@ class AgapTheme {
         ),
       ),
       navigationBarTheme: NavigationBarThemeData(
-        height: 70,
-        indicatorColor: scheme.secondaryContainer,
+        height: 72,
+        backgroundColor: Colors.white,
+        elevation: 8,
+        shadowColor: Colors.black.withValues(alpha: 0.08),
+        indicatorColor: AgapColors.mintSurface,
         labelTextStyle: WidgetStateProperty.all(
-          GoogleFonts.inter(fontSize: 12, fontWeight: FontWeight.w600),
+          GoogleFonts.inter(fontSize: 11, fontWeight: FontWeight.w600),
         ),
       ),
     );

@@ -3,8 +3,9 @@ import 'package:flutter/material.dart';
 import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
 import '../../../notifications/mock_notification_repository.dart';
-import '../../../marketplace/mock_marketplace_repository.dart';
+import '../../../marketplace/marketplace_repository.dart';
 import '../../../payments/mock_payments_repository.dart';
+import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../../shift/mock_shift_repository.dart';
 import 'business_gig_applicants_screen.dart';
@@ -18,13 +19,15 @@ class BusinessGigsScreen extends StatefulWidget {
     required this.payments,
     required this.shiftRepo,
     required this.session,
+    this.embedded = false,
   });
 
-  final MockMarketplaceRepository repo;
+  final MarketplaceRepository repo;
   final MockNotificationRepository notifications;
   final MockPaymentsRepository payments;
   final MockShiftRepository shiftRepo;
   final SessionController session;
+  final bool embedded;
 
   @override
   State<BusinessGigsScreen> createState() => _BusinessGigsScreenState();
@@ -47,7 +50,7 @@ class _BusinessGigsScreenState extends State<BusinessGigsScreen> {
       _error = null;
     });
     try {
-      final businessId = widget.session.state.email ?? 'business';
+      final businessId = appActorId(widget.session, mockFallback: 'business');
       final all = await widget.repo.listGigs();
       final items = all.where((g) => g.businessId == businessId).toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -63,7 +66,7 @@ class _BusinessGigsScreenState extends State<BusinessGigsScreen> {
   }
 
   Future<void> _cancel(Gig gig) async {
-    final businessId = widget.session.state.email ?? 'business';
+    final businessId = appActorId(widget.session, mockFallback: 'business');
     try {
       await widget.repo.cancelGig(gigId: gig.id, businessId: businessId);
       await widget.notifications.add(
@@ -81,6 +84,114 @@ class _BusinessGigsScreenState extends State<BusinessGigsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final list = _loading
+        ? const Center(child: CircularProgressIndicator())
+        : _error != null
+            ? Center(child: Text('Error: $_error'))
+            : _items.isEmpty
+                ? const Center(child: Text('No gigs yet. Tap “Post a Job” on Home to create one.'))
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                    itemCount: _items.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                    itemBuilder: (context, i) {
+                      final g = _items[i];
+                      return Card(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              ListTile(
+                                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+                                title: Text(g.title, style: const TextStyle(fontWeight: FontWeight.w700)),
+                                subtitle: Text('${g.category} • ${_statusLabel(g.status)}'),
+                              ),
+                              Padding(
+                                padding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
+                                child: Wrap(
+                                  spacing: 8,
+                                  children: [
+                                    FilledButton.tonalIcon(
+                                      onPressed: () async {
+                                        await Navigator.of(context).push(
+                                          MaterialPageRoute(
+                                            builder: (_) => BusinessGigApplicantsScreen(
+                                              repo: widget.repo,
+                                              notifications: widget.notifications,
+                                              payments: widget.payments,
+                                              session: widget.session,
+                                              gig: g,
+                                            ),
+                                          ),
+                                        );
+                                        await _load();
+                                      },
+                                      icon: const Icon(Icons.people_alt_outlined),
+                                      label: const Text('Applicants'),
+                                    ),
+                                    if (g.status == GigStatus.filled ||
+                                        g.status == GigStatus.ongoing ||
+                                        g.status == GigStatus.open)
+                                      OutlinedButton.icon(
+                                        onPressed: () async {
+                                          await Navigator.of(context).push(
+                                            MaterialPageRoute(
+                                              builder: (_) => BusinessQrScreen(
+                                                shiftRepo: widget.shiftRepo,
+                                                gig: g,
+                                              ),
+                                            ),
+                                          );
+                                        },
+                                        icon: const Icon(Icons.qr_code_2),
+                                        label: const Text('QR'),
+                                      ),
+                                    if (g.status != GigStatus.cancelled && g.status != GigStatus.completed)
+                                      TextButton.icon(
+                                        onPressed: () => _cancel(g),
+                                        icon: const Icon(Icons.cancel_outlined),
+                                        label: const Text('Cancel'),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  );
+
+    if (widget.embedded) {
+      return SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      'My gigs',
+                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: 'Refresh',
+                    onPressed: _loading ? null : _load,
+                    icon: const Icon(Icons.refresh_rounded),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(child: list),
+          ],
+        ),
+      );
+    }
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('My gigs'),
@@ -92,71 +203,7 @@ class _BusinessGigsScreenState extends State<BusinessGigsScreen> {
           ),
         ],
       ),
-      body: SafeArea(
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _error != null
-                ? Center(child: Text('Error: $_error'))
-                : _items.isEmpty
-                    ? const Center(child: Text('No gigs yet. Use “Post” to create one.'))
-                    : ListView.separated(
-                        itemCount: _items.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
-                        itemBuilder: (context, i) {
-                          final g = _items[i];
-                          return ListTile(
-                            title: Text(g.title),
-                            subtitle: Text('${g.category} • ${_statusLabel(g.status)}'),
-                            trailing: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  tooltip: 'Applicants',
-                                  onPressed: () async {
-                                    await Navigator.of(context).push(
-                                      MaterialPageRoute(
-                                        builder: (_) => BusinessGigApplicantsScreen(
-                                          repo: widget.repo,
-                                          notifications: widget.notifications,
-                                          payments: widget.payments,
-                                          session: widget.session,
-                                          gig: g,
-                                        ),
-                                      ),
-                                    );
-                                    await _load();
-                                  },
-                                  icon: const Icon(Icons.people_alt_outlined),
-                                ),
-                                if (g.status == GigStatus.filled ||
-                                    g.status == GigStatus.ongoing ||
-                                    g.status == GigStatus.open)
-                                  IconButton(
-                                    tooltip: 'QR',
-                                    onPressed: () async {
-                                      await Navigator.of(context).push(
-                                        MaterialPageRoute(
-                                          builder: (_) => BusinessQrScreen(
-                                            shiftRepo: widget.shiftRepo,
-                                            gig: g,
-                                          ),
-                                        ),
-                                      );
-                                    },
-                                    icon: const Icon(Icons.qr_code_2),
-                                  ),
-                                if (g.status != GigStatus.cancelled && g.status != GigStatus.completed)
-                                  IconButton(
-                                    tooltip: 'Cancel',
-                                    onPressed: () => _cancel(g),
-                                    icon: const Icon(Icons.cancel_outlined),
-                                  ),
-                              ],
-                            ),
-                          );
-                        },
-                      ),
-      ),
+      body: SafeArea(child: list),
     );
   }
 

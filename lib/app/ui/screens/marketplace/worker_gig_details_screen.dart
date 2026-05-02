@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 
 import '../../../../domain/models.dart';
-import '../../../marketplace/mock_marketplace_repository.dart';
+import '../../../marketplace/marketplace_repository.dart';
 import '../../../notifications/mock_notification_repository.dart';
+import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
+import '../../widgets/locked_action.dart';
 
 class WorkerGigDetailsScreen extends StatefulWidget {
   const WorkerGigDetailsScreen({
@@ -14,7 +16,7 @@ class WorkerGigDetailsScreen extends StatefulWidget {
     required this.gigId,
   });
 
-  final MockMarketplaceRepository repo;
+  final MarketplaceRepository repo;
   final MockNotificationRepository notifications;
   final SessionController session;
   final String gigId;
@@ -53,7 +55,15 @@ class _WorkerGigDetailsScreenState extends State<WorkerGigDetailsScreen> {
   }
 
   Future<void> _apply() async {
-    final workerId = widget.session.state.email ?? 'worker';
+    if (!canPerformVerifiedAction(widget.session)) {
+      await showLockedFeatureDialog(
+        context,
+        session: widget.session,
+        featureName: 'Applying to jobs',
+      );
+      return;
+    }
+    final workerId = appActorId(widget.session, mockFallback: 'worker');
     try {
       await widget.repo.applyToGig(gigId: widget.gigId, workerId: workerId);
       final gig = await widget.repo.getGig(widget.gigId);

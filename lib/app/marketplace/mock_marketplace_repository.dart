@@ -4,8 +4,9 @@ import 'dart:math' as math;
 import '../../domain/enums.dart';
 import '../../domain/models.dart';
 import '../storage/kv_store.dart';
+import 'marketplace_repository.dart';
 
-class MockMarketplaceRepository {
+class MockMarketplaceRepository implements MarketplaceRepository {
   MockMarketplaceRepository(this._store);
 
   final KvStore _store;
@@ -301,11 +302,5 @@ class _ScoredGig {
   _ScoredGig({required this.gig, required this.distanceMeters});
   final Gig gig;
   final int distanceMeters;
-}
-
-class HireResult {
-  HireResult({required this.selectedWorkerId, required this.rejectedWorkerIds});
-  final String selectedWorkerId;
-  final List<String> rejectedWorkerIds;
 }
 

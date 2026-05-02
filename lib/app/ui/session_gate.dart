@@ -5,9 +5,8 @@ import '../marketplace/marketplace_scope.dart';
 import '../session/session_controller.dart';
 import '../session/session_models.dart';
 import 'screens/auth/getting_started_screen.dart';
-import 'screens/auth/otp_screen.dart';
+import 'screens/auth/login_screen.dart';
 import 'screens/auth/role_selection_screen.dart';
-import 'screens/auth/sign_in_email_screen.dart';
 import 'screens/dashboard/business_dashboard_shell.dart';
 import 'screens/dashboard/worker_dashboard_shell.dart';
 import 'screens/onboarding/business_onboarding_screen.dart';
@@ -30,52 +29,52 @@ class SessionGate extends StatelessWidget {
             return GettingStartedScreen(
               onGetStarted: session.completeGettingStarted,
             );
+          case AuthStage.needsLogin:
+            return LoginScreen(
+              onLogin: ({required email, required password}) =>
+                  session.attemptLogin(email: email, password: password),
+              onTapSignUp: session.startSignUp,
+            );
           case AuthStage.needsRole:
             return RoleSelectionScreen(
               onSelectRole: session.setRole,
-            );
-          case AuthStage.needsEmail:
-            return SignInEmailScreen(
-              role: state.role,
-              onSubmit: session.submitEmail,
-            );
-          case AuthStage.needsOtp:
-            return OtpScreen(
-              email: state.email ?? '',
-              onVerify: session.verifyOtp,
-              onBack: session.signOut,
-              onResend: () async {
-                final email = state.email;
-                if (email != null && email.isNotEmpty) {
-                  await session.submitEmail(email);
-                }
-              },
+              onBack: session.goBackToLogin,
             );
           case AuthStage.needsOnboarding:
             final role = state.role;
             if (role == UserRole.business) {
               return BusinessOnboardingScreen(
-                onSubmit: session.completeOnboardingAndSubmitForReview,
+                onSubmit: () => session.completeOnboardingAndSubmitForReview(
+                  UserRole.business,
+                ),
+                onBack: session.goBackToRoleSelection,
               );
             }
             return WorkerOnboardingScreen(
-              onSubmit: session.completeOnboardingAndSubmitForReview,
+              onSubmit: () => session.completeOnboardingAndSubmitForReview(
+                UserRole.worker,
+              ),
+              onBack: session.goBackToRoleSelection,
             );
           case AuthStage.authenticated:
             final role = state.role;
-            final status = state.accountStatus ?? AccountStatus.pendingVerification;
-            if (status != AccountStatus.verified) {
+            final status =
+                state.accountStatus ?? AccountStatus.pendingVerification;
+            // Hard-gate only the truly-blocked statuses; for `pendingVerification`
+            // and `rejected` the user is allowed into the dashboard with a
+            // limited-access banner + locked actions.
+            if (status == AccountStatus.suspended) {
               return VerificationStatusScreen(
                 status: status,
                 onReset: session.resetAll,
-                onDemoMarkVerified: () => session.setAccountStatus(AccountStatus.verified),
+                onDemoMarkVerified: () =>
+                    session.setAccountStatus(AccountStatus.verified),
               );
             }
             final marketplace = MarketplaceScope.of(context);
             if (role == UserRole.business) {
               return BusinessDashboardShell(
-                onSignOut: session.resetAll,
-                onDebugSetStatus: session.setAccountStatus,
+                onSignOut: session.signOut,
                 repo: marketplace.repo,
                 notifications: marketplace.notifications,
                 payments: marketplace.payments,
@@ -85,7 +84,7 @@ class SessionGate extends StatelessWidget {
               );
             }
             return WorkerDashboardShell(
-              onSignOut: session.resetAll,
+              onSignOut: session.signOut,
               onDebugSetStatus: session.setAccountStatus,
               repo: marketplace.repo,
               notifications: marketplace.notifications,
@@ -99,4 +98,3 @@ class SessionGate extends StatelessWidget {
     );
   }
 }
-
