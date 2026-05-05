@@ -69,6 +69,45 @@ flutter pub get
    - [GitHub CLI](https://cli.github.com/) (`gh auth login`), or  
    - SSH remotes (`git@github.com:Siom4ii/AgapShift.git`) with an SSH key added to your GitHub account.
 
+## Admin web (staff KYC / account review)
+
+Staff use a **separate Vite app** in `admin-web/`. It uses the **same Supabase project** as the Flutter app. Mobile logins with `profiles.role = 'admin'` are blocked; use a **dedicated staff email** in Auth and set that profile’s role to `admin`.
+
+### 1. Apply Supabase migrations
+
+From the repo root, push or run SQL in order (at least through admin/KYC):
+
+- `supabase/migrations/020_admin_portal.sql` — admin role, RLS, `admin_set_account_review`, storage policies  
+- `supabase/migrations/021_kyc_per_document_review.sql` — per-document KYC review + `admin_set_kyc_document_review`  
+- `supabase/migrations/022_admin_kyc_review_rpc_fix.sql` — RPC signature fix (if PostgREST could not see the function)
+
+Use the Supabase CLI (`supabase db push`) or paste each file in the SQL editor on the hosted project.
+
+### 2. Create a staff admin user
+
+1. In **Supabase → Authentication**, create a user (staff email + password).  
+2. Ensure a row exists in `public.profiles` for that user’s `id` (same as in the mobile app flow).  
+3. Set the role:
+
+   ```sql
+   update public.profiles
+   set role = 'admin'
+   where id = '<auth_user_uuid>';
+   ```
+
+### 3. Run the admin UI locally
+
+```bash
+cd admin-web
+cp .env.example .env
+# Edit .env: VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
+# (same values as Flutter’s assets/supabase.env or Dashboard → Settings → API)
+npm install
+npm run dev
+```
+
+Open **http://localhost:5174** (port is set in `admin-web/vite.config.ts`). Sign in with the staff account.
+
 ## Run the app
 
 ### Web (quick preview)
@@ -116,10 +155,12 @@ flutter test
 | `tasks/prd-agapshift.md` | Product requirements |
 | `tasks/tasks-agapshift.md` | Implementation task checklist |
 | `tasks/api-contracts-agapshift.md` | Draft API contracts for future backend |
+| `admin-web/` | Staff portal (Vite): KYC / account review |
+| `supabase/migrations/` | Postgres schema, RLS, RPCs for Supabase |
 
 ## Demo notes
 
-- **Verification**: After onboarding you may see a pending state; use **“Demo: Mark as Verified”** when shown (real admin will be a separate web app).
+- **Verification**: After onboarding you may see a pending state; use **“Demo: Mark as Verified”** when shown, or use the **admin web** above if your project is wired to Supabase with migrations applied.
 - **Logout**: From Worker/Business dashboards, open the **menu (⋮)** → **Logout** to return to the start.
 
 ## License
