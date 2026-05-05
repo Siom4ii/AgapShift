@@ -8,10 +8,14 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../../location/davao_del_sur_scope.dart';
 import 'photon_geocode.dart';
 
-/// Digos City — sensible default for Davao del Sur onboarding.
-final LatLng kDefaultDavaoDelSurCenter = LatLng(6.7461, 125.3553);
+/// Digos City — same anchor as [DavaoDelSurScope.defaultCenter].
+final LatLng kDefaultDavaoDelSurCenter = LatLng(
+  DavaoDelSurScope.defaultCenter.lat,
+  DavaoDelSurScope.defaultCenter.lng,
+);
 
 /// OpenStreetMap tiles with a tappable pin, GPS, and optional address geocode.
 class PinnableBusinessMapCard extends StatefulWidget {

@@ -1,12 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
-import '../../../notifications/mock_notification_repository.dart';
+import '../../../notifications/notification_repository.dart';
 import '../../../marketplace/marketplace_repository.dart';
-import '../../../payments/mock_payments_repository.dart';
+import '../../../payments/payments_repository.dart';
+import '../../../profile/worker_display_names.dart';
+import '../../../ratings/mock_ratings_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
+import '../../../shift/shift_repository.dart';
+import '../../theme/agap_colors.dart';
+import '../../widgets/shell_screen_polish.dart';
+import '../../widgets/success_feedback.dart';
+import '../shift/employer_shift_scan_screen.dart';
 
 class BusinessGigApplicantsScreen extends StatefulWidget {
   const BusinessGigApplicantsScreen({
@@ -16,22 +24,40 @@ class BusinessGigApplicantsScreen extends StatefulWidget {
     required this.payments,
     required this.session,
     required this.gig,
+    this.ratings,
+    this.shiftRepo,
   });
 
   final MarketplaceRepository repo;
-  final MockNotificationRepository notifications;
-  final MockPaymentsRepository payments;
+  final NotificationRepository notifications;
+  final PaymentsRepository payments;
   final SessionController session;
   final Gig gig;
+  final MockRatingsRepository? ratings;
+  final ShiftRepository? shiftRepo;
 
   @override
-  State<BusinessGigApplicantsScreen> createState() => _BusinessGigApplicantsScreenState();
+  State<BusinessGigApplicantsScreen> createState() =>
+      _BusinessGigApplicantsScreenState();
 }
 
 class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScreen> {
   bool _loading = false;
   List<GigApplication> _apps = const [];
   String? _error;
+  Map<String, String> _displayNames = const {};
+  Map<String, double> _ratingByWorker = const {};
+  bool _escrowFunded = false;
+
+  static final _headerGradient = LinearGradient(
+    colors: [
+      AgapColors.businessGreenDeep,
+      AgapColors.businessGreen,
+      AgapColors.businessGreenLight,
+    ],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
 
   @override
   void initState() {
@@ -46,14 +72,33 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
     });
     try {
       final apps = await widget.repo.listApplicants(widget.gig.id);
+      final escrow = await widget.payments.getEscrowForGig(widget.gig.id);
+      final funded = escrow != null &&
+          (escrow.status == EscrowStatus.funded ||
+              escrow.status == EscrowStatus.held);
+
+      final ids = apps.map((a) => a.workerId).toSet();
+      final names = await fetchWorkerDisplayNamesById(ids);
+      final ratings = <String, double>{};
+      final r = widget.ratings;
+      if (r != null) {
+        for (final id in ids) {
+          ratings[id] = await r.averageForUser(id);
+        }
+      }
+
       if (!mounted) return;
-      setState(() => _apps = apps);
+      setState(() {
+        _apps = apps;
+        _displayNames = names;
+        _ratingByWorker = ratings;
+        _escrowFunded = funded;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = '$e');
     } finally {
-      if (!mounted) return;
-      setState(() => _loading = false);
+      if (mounted) setState(() => _loading = false);
     }
   }
 
@@ -62,6 +107,7 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
     try {
       final escrowFunded = await widget.payments.isEscrowFunded(widget.gig.id);
       if (!escrowFunded) {
+        if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Fund escrow before hiring.')),
         );
@@ -89,9 +135,8 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
       }
       if (!mounted) return;
       await _load();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Hired ${a.workerId}')),
-      );
+      if (!mounted) return;
+      showSuccessSnackBar(context, 'Worker hired successfully');
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -109,87 +154,229 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
         amount: widget.gig.pay,
       );
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Escrow funded')));
-      setState(() {});
+      showSuccessSnackBar(context, 'Escrow funded successfully');
+      await _load();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Cannot fund escrow: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Cannot fund escrow: $e')),
+      );
     }
   }
 
+  String _displayNameFor(String workerId) {
+    final n = _displayNames[workerId]?.trim();
+    if (n != null && n.isNotEmpty) return n;
+    return applicantDisplayNameFallback(workerId);
+  }
+
+  String _initialsFor(String workerId) {
+    return applicantInitialsFromName(_displayNameFor(workerId), workerId);
+  }
+
+  bool get _showShiftQr =>
+      widget.shiftRepo != null &&
+      (widget.gig.status == GigStatus.open ||
+          widget.gig.status == GigStatus.filled ||
+          widget.gig.status == GigStatus.ongoing);
+
   @override
   Widget build(BuildContext context) {
-    final escrowFuture = widget.payments.getEscrowForGig(widget.gig.id);
+    final bottom = MediaQuery.paddingOf(context).bottom;
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Applicants • ${widget.gig.title}'),
-        actions: [
-          IconButton(
-            tooltip: 'Refresh',
-            onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh),
-          ),
-        ],
-      ),
-      body: SafeArea(
-        child: FutureBuilder(
-          future: escrowFuture,
-          builder: (context, escrowSnap) {
-            final escrow = escrowSnap.data;
-            final funded = escrow != null &&
-                (escrow.status == EscrowStatus.funded || escrow.status == EscrowStatus.held);
-            return Column(
-              children: [
-                Material(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+      backgroundColor: Colors.transparent,
+      body: ShellChromeBackground(
+        kind: ShellChromeKind.business,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            SliverToBoxAdapter(
+              child: Container(
+                width: double.infinity,
+                decoration: BoxDecoration(gradient: _headerGradient),
+                child: SafeArea(
+                  bottom: false,
                   child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Row(
+                    padding: const EdgeInsets.fromLTRB(8, 4, 16, 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Text(
-                            funded ? 'Escrow: Funded' : 'Escrow: Not funded',
-                            style: Theme.of(context).textTheme.titleSmall,
-                          ),
+                        Row(
+                          children: [
+                            Material(
+                              color: Colors.white.withValues(alpha: 0.22),
+                              shape: const CircleBorder(),
+                              clipBehavior: Clip.antiAlias,
+                              child: IconButton(
+                                onPressed: () => Navigator.of(context).maybePop(),
+                                icon: const Icon(
+                                  Icons.arrow_back_ios_new_rounded,
+                                  color: Colors.white,
+                                  size: 20,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Applicants',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.white.withValues(alpha: 0.9),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    widget.gig.title,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w800,
+                                      color: Colors.white,
+                                      height: 1.2,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (_showShiftQr)
+                              IconButton(
+                                tooltip: 'Scan worker attendance QR',
+                                onPressed: () {
+                                  final r = widget.shiftRepo;
+                                  if (r == null) return;
+                                  Navigator.of(context).push<void>(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) => EmployerShiftScanScreen(
+                                        shiftRepo: r,
+                                        gig: widget.gig,
+                                        session: widget.session,
+                                        payments: widget.payments,
+                                        repo: widget.repo,
+                                      ),
+                                    ),
+                                  );
+                                },
+                                icon: Icon(
+                                  Icons.qr_code_2_rounded,
+                                  color: Colors.white.withValues(alpha: 0.95),
+                                ),
+                              ),
+                            IconButton(
+                              tooltip: 'Refresh',
+                              onPressed: _loading ? null : _load,
+                              icon: Icon(
+                                Icons.refresh_rounded,
+                                color: Colors.white.withValues(alpha: 0.95),
+                              ),
+                            ),
+                          ],
                         ),
-                        if (!funded)
-                          FilledButton(
-                            onPressed: _fundEscrow,
-                            child: const Text('Fund escrow'),
-                          ),
                       ],
                     ),
                   ),
                 ),
-                Expanded(
-                  child: _loading
-                      ? const Center(child: CircularProgressIndicator())
-                      : _error != null
-                          ? Center(child: Text('Error: $_error'))
-                          : _apps.isEmpty
-                              ? const Center(child: Text('No applicants yet.'))
-                              : ListView.separated(
-                                  itemCount: _apps.length,
-                                  separatorBuilder: (_, __) => const Divider(height: 1),
-                                  itemBuilder: (context, i) {
-                                    final a = _apps[i];
-                                    return ListTile(
-                                      title: Text(a.workerId),
-                                      subtitle: Text(_appStatus(a.status)),
-                                      trailing: widget.gig.status == GigStatus.open &&
-                                              a.status == ApplicationStatus.applied
-                                          ? FilledButton(
-                                              onPressed: () => _hire(a),
-                                              child: const Text('Hire'),
-                                            )
-                                          : null,
-                                    );
-                                  },
-                                ),
+              ),
+            ),
+            SliverToBoxAdapter(
+              child: Transform.translate(
+                offset: const Offset(0, -10),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: _EscrowCard(
+                    funded: _escrowFunded,
+                    onFund: _fundEscrow,
+                  ),
                 ),
-              ],
-            );
-          },
+              ),
+            ),
+            if (_loading)
+              const SliverFillRemaining(
+                child: Center(
+                  child: CircularProgressIndicator(
+                    color: AgapColors.businessGreen,
+                  ),
+                ),
+              )
+            else if (_error != null)
+              SliverFillRemaining(
+                child: Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(24),
+                    child: Text(
+                      'Error: $_error',
+                      textAlign: TextAlign.center,
+                      style: GoogleFonts.inter(
+                        color: AgapColors.textMuted,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ),
+              )
+            else if (_apps.isEmpty)
+              SliverFillRemaining(
+                child: Center(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.people_outline_rounded,
+                        size: 48,
+                        color: AgapColors.textMuted.withValues(alpha: 0.5),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'No applicants yet',
+                        style: GoogleFonts.inter(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          color: const Color(0xFF111827),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Share your job or check back later.',
+                        style: GoogleFonts.inter(
+                          fontSize: 14,
+                          color: AgapColors.textMuted,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(16, 0, 16, 20 + bottom),
+                sliver: SliverList.separated(
+                  itemCount: _apps.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 12),
+                  itemBuilder: (context, i) {
+                    final a = _apps[i];
+                    final rating = _ratingByWorker[a.workerId] ?? 0;
+                    final canHire = widget.gig.status == GigStatus.open &&
+                        a.status == ApplicationStatus.applied;
+                    return _ApplicantCard(
+                      initials: _initialsFor(a.workerId),
+                      name: _displayNameFor(a.workerId),
+                      statusLabel: _appStatus(a.status),
+                      status: a.status,
+                      appliedAt: a.createdAt,
+                      rating: rating,
+                      showHire: canHire,
+                      onHire: () => _hire(a),
+                    );
+                  },
+                ),
+              ),
+          ],
         ),
       ),
     );
@@ -203,3 +390,288 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
       };
 }
 
+class _EscrowCard extends StatelessWidget {
+  const _EscrowCard({
+    required this.funded,
+    required this.onFund,
+  });
+
+  final bool funded;
+  final VoidCallback onFund;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AgapColors.borderSubtle),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 14,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AgapColors.businessMint,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(
+              Icons.account_balance_wallet_outlined,
+              color: AgapColors.businessGreenDeep,
+              size: 22,
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Escrow',
+                  style: GoogleFonts.inter(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                    color: AgapColors.textMuted,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  funded ? 'Funded — ready to hire' : 'Not funded',
+                  style: GoogleFonts.inter(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF111827),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (!funded)
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: AgapColors.businessGreenDeep,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+              onPressed: onFund,
+              child: Text(
+                'Fund escrow',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+              ),
+            )
+          else
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AgapColors.businessMint,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: AgapColors.businessGreen.withValues(alpha: 0.35),
+                ),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.check_circle_rounded,
+                    size: 18,
+                    color: AgapColors.businessGreenDeep,
+                  ),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Ready',
+                    style: GoogleFonts.inter(
+                      fontWeight: FontWeight.w800,
+                      color: AgapColors.businessGreenDeep,
+                      fontSize: 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ApplicantCard extends StatelessWidget {
+  const _ApplicantCard({
+    required this.initials,
+    required this.name,
+    required this.statusLabel,
+    required this.status,
+    required this.appliedAt,
+    required this.rating,
+    required this.showHire,
+    required this.onHire,
+  });
+
+  final String initials;
+  final String name;
+  final String statusLabel;
+  final ApplicationStatus status;
+  final DateTime appliedAt;
+  final double rating;
+  final bool showHire;
+  final VoidCallback onHire;
+
+  Color get _statusAccent => switch (status) {
+        ApplicationStatus.applied => const Color(0xFF2563EB),
+        ApplicationStatus.hired => AgapColors.businessGreenDeep,
+        ApplicationStatus.rejected => const Color(0xFFDC2626),
+        ApplicationStatus.withdrawn => AgapColors.textMuted,
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final dateStr =
+        '${appliedAt.month}/${appliedAt.day}/${appliedAt.year.toString().substring(2)}';
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AgapColors.borderSubtle),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CircleAvatar(
+            radius: 22,
+            backgroundColor: AgapColors.businessGreenDeep,
+            child: Text(
+              initials,
+              style: GoogleFonts.inter(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+                fontSize: 13,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        name,
+                        style: GoogleFonts.inter(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                    Icon(
+                      Icons.verified_rounded,
+                      size: 18,
+                      color: AgapColors.businessGreen,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: _statusAccent.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: _statusAccent.withValues(alpha: 0.25),
+                        ),
+                      ),
+                      child: Text(
+                        statusLabel,
+                        style: GoogleFonts.inter(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w800,
+                          color: _statusAccent,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      'Applied $dateStr',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: AgapColors.textMuted,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.star_rounded,
+                    size: 16,
+                    color: const Color(0xFFEAB308),
+                  ),
+                  Text(
+                    rating > 0 ? rating.toStringAsFixed(1) : '—',
+                    style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+                  ),
+                ],
+              ),
+              if (showHire) ...[
+                const SizedBox(height: 10),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: AgapColors.businessGreenDeep,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 10,
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed: onHire,
+                  child: Text(
+                    'Hire',
+                    style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}

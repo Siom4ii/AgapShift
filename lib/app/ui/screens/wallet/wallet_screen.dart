@@ -3,12 +3,13 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
-import '../../../payments/mock_payments_repository.dart';
+import '../../../payments/payments_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../theme/agap_colors.dart';
 import '../../widgets/locked_action.dart';
 import '../../widgets/shell_screen_polish.dart';
+import '../../widgets/success_feedback.dart';
 
 class WalletScreen extends StatefulWidget {
   const WalletScreen({
@@ -18,7 +19,7 @@ class WalletScreen extends StatefulWidget {
     this.embedded = false,
   });
 
-  final MockPaymentsRepository payments;
+  final PaymentsRepository payments;
   final SessionController session;
   final bool embedded;
 
@@ -84,9 +85,7 @@ class _WalletScreenState extends State<WalletScreen> {
       if (!mounted) return;
       await _load();
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Withdrawal requested')));
+      showSuccessSnackBar(context, 'Withdrawal request submitted');
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(

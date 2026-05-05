@@ -4,6 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../domain/enums.dart';
 import '../../domain/models.dart';
+import '../location/davao_del_sur_scope.dart';
 import 'marketplace_repository.dart';
 
 /// Postgres-backed gigs + applications ([supabase/migrations/001_marketplace.sql]).
@@ -17,7 +18,10 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
   Future<List<Gig>> listGigs() async {
     final rows = await _client.from('gigs').select();
     final list = rows as List<dynamic>;
-    return list.map((e) => _gigFromRow(Map<String, dynamic>.from(e as Map))).toList();
+    return list
+        .map((e) => _gigFromRow(Map<String, dynamic>.from(e as Map)))
+        .where((g) => DavaoDelSurScope.contains(g.location))
+        .toList();
   }
 
   @override
@@ -31,8 +35,15 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
     required DateTime endAt,
     required Money pay,
     required String category,
+    int? workersNeeded,
+    bool isUrgent = false,
   }) async {
-    final row = await _client.from('gigs').insert({
+    if (!DavaoDelSurScope.contains(location)) {
+      throw ArgumentError(
+        'Gig location must be inside ${DavaoDelSurScope.regionLabel}.',
+      );
+    }
+    final payload = <String, dynamic>{
       'business_id': businessId,
       'title': title,
       'description': description,
@@ -45,7 +56,12 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
       'pay_currency': pay.currency,
       'category': category,
       'status': GigStatus.open.name,
-    }).select().single();
+      'is_urgent': isUrgent,
+    };
+    if (workersNeeded != null) {
+      payload['workers_needed'] = workersNeeded;
+    }
+    final row = await _client.from('gigs').insert(payload).select().single();
     return _gigFromRow(Map<String, dynamic>.from(row));
   }
 
@@ -53,7 +69,9 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
   Future<Gig?> getGig(String gigId) async {
     final row = await _client.from('gigs').select().eq('id', gigId).maybeSingle();
     if (row == null) return null;
-    return _gigFromRow(Map<String, dynamic>.from(row));
+    final gig = _gigFromRow(Map<String, dynamic>.from(row));
+    if (!DavaoDelSurScope.contains(gig.location)) return null;
+    return gig;
   }
 
   @override
@@ -67,6 +85,7 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
     final filtered = <_ScoredGig>[];
     for (final g in gigs) {
       if (g.status != GigStatus.open) continue;
+      if (!DavaoDelSurScope.contains(g.location)) continue;
       if (category != null && category.isNotEmpty && g.category != category) {
         continue;
       }
@@ -193,6 +212,7 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
   }
 
   Gig _gigFromRow(Map<String, dynamic> row) {
+    final wn = row['workers_needed'];
     return Gig(
       id: row['id'] as String,
       businessId: row['business_id'] as String,
@@ -212,6 +232,8 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
       category: row['category'] as String,
       status: GigStatus.values.firstWhere((e) => e.name == row['status']),
       createdAt: DateTime.parse(row['created_at'] as String),
+      workersNeeded: wn == null ? null : (wn as num).toInt(),
+      isUrgent: row['is_urgent'] == true,
     );
   }
 

@@ -80,7 +80,8 @@ class KycUploadZone extends StatelessWidget {
   }
 }
 
-String _displayName(PlatformFile f) {
+/// Display name for UI / payloads (not necessarily unique).
+String kycFileLabel(PlatformFile f) {
   if (f.name.isNotEmpty) return f.name;
   if (f.path != null && f.path!.isNotEmpty) {
     final i = f.path!.replaceAll(r'\', '/').lastIndexOf('/');
@@ -89,50 +90,75 @@ String _displayName(PlatformFile f) {
   return 'Uploaded file';
 }
 
-/// Picks a document; falls back to any file type if the filtered picker fails (common on web/desktop).
-Future<String?> pickKycDocument() async {
+/// Picks a document; [withData] ensures bytes on web and many mobile pickers.
+Future<PlatformFile?> pickKycDocumentFile() async {
   FilePickerResult? r;
   try {
     r = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: const ['pdf', 'jpg', 'jpeg', 'png'],
+      withData: true,
     );
   } catch (_) {
     r = null;
   }
-  if (r != null && r.files.isNotEmpty) return _displayName(r.files.single);
+  if (r != null && r.files.isNotEmpty) return r.files.single;
 
   try {
-    r = await FilePicker.platform.pickFiles(type: FileType.image);
+    r = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
   } catch (_) {
     r = null;
   }
-  if (r != null && r.files.isNotEmpty) return _displayName(r.files.single);
+  if (r != null && r.files.isNotEmpty) return r.files.single;
 
   try {
-    r = await FilePicker.platform.pickFiles(type: FileType.any);
+    r = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      withData: true,
+    );
   } catch (_) {
     return null;
   }
-  if (r != null && r.files.isNotEmpty) return _displayName(r.files.single);
+  if (r != null && r.files.isNotEmpty) return r.files.single;
   return null;
 }
 
 /// Selfie / liveness: prefer images; fall back to any.
-Future<String?> pickKycSelfieImage() async {
+Future<PlatformFile?> pickKycSelfieImageFile() async {
   FilePickerResult? r;
   try {
-    r = await FilePicker.platform.pickFiles(type: FileType.image);
+    r = await FilePicker.platform.pickFiles(
+      type: FileType.image,
+      withData: true,
+    );
   } catch (_) {
     r = null;
   }
-  if (r != null && r.files.isNotEmpty) return _displayName(r.files.single);
+  if (r != null && r.files.isNotEmpty) return r.files.single;
 
   try {
-    r = await FilePicker.platform.pickFiles(type: FileType.any);
+    r = await FilePicker.platform.pickFiles(
+      type: FileType.any,
+      withData: true,
+    );
   } catch (_) {
     return null;
   }
-  if (r != null && r.files.isNotEmpty) return _displayName(r.files.single);
+  if (r != null && r.files.isNotEmpty) return r.files.single;
   return null;
+}
+
+/// Picks a document; falls back to any file type if the filtered picker fails (common on web/desktop).
+Future<String?> pickKycDocument() async {
+  final f = await pickKycDocumentFile();
+  return f == null ? null : kycFileLabel(f);
+}
+
+/// Selfie / liveness: prefer images; fall back to any.
+Future<String?> pickKycSelfieImage() async {
+  final f = await pickKycSelfieImageFile();
+  return f == null ? null : kycFileLabel(f);
 }

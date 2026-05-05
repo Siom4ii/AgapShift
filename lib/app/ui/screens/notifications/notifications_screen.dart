@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../domain/models.dart';
-import '../../../notifications/mock_notification_repository.dart';
+import '../../../notifications/notification_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../theme/agap_colors.dart';
@@ -14,7 +14,7 @@ class NotificationsScreen extends StatefulWidget {
     required this.session,
   });
 
-  final MockNotificationRepository repo;
+  final NotificationRepository repo;
   final SessionController session;
 
   @override
@@ -47,7 +47,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
       final raw = await widget.repo.listForUser(userId);
       if (!mounted) return;
       final mapped = raw.map((n) => _NotifItem.fromModel(n)).toList();
-      setState(() => _items = _mergeWithDemos(mapped, userId));
+      setState(() => _items = mapped);
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = '$e');
@@ -279,61 +279,6 @@ class _NotifItem {
     final m = regex.firstMatch('$title $body');
     return m?.group(0);
   }
-}
-
-List<_NotifItem> _mergeWithDemos(List<_NotifItem> mapped, String userId) {
-  if (mapped.length >= 4) return mapped;
-  final demos = _demoItems(userId);
-  final ids = mapped.map((e) => e.id).toSet();
-  final out = [...mapped];
-  for (final d in demos) {
-    if (out.length >= 6) break;
-    if (!ids.contains(d.id)) out.add(d);
-  }
-  return out;
-}
-
-List<_NotifItem> _demoItems(String userId) {
-  final now = DateTime.now();
-  return [
-    _NotifItem(
-      id: 'demo_gig_$userId',
-      title: 'New Gig Nearby: Warehouse Assistant',
-      body: 'A new role matching your skills was posted 2 km away.',
-      at: now.subtract(const Duration(minutes: 10)),
-      read: false,
-      kind: _NotifKind.gig,
-      isPersisted: false,
-    ),
-    _NotifItem(
-      id: 'demo_pay_$userId',
-      title: 'Payment Received: ₱5,250.00',
-      body: 'Your shift payment has been released to your wallet.',
-      at: now.subtract(const Duration(hours: 2)),
-      read: true,
-      kind: _NotifKind.payment,
-      isPersisted: false,
-      highlightPeso: '₱5,250.00',
-    ),
-    _NotifItem(
-      id: 'demo_rate_$userId',
-      title: 'Rating Received: 5 stars from Logistics Hub',
-      body: '"Great communication and on time every day."',
-      at: now.subtract(const Duration(days: 1)),
-      read: true,
-      kind: _NotifKind.rating,
-      isPersisted: false,
-    ),
-    _NotifItem(
-      id: 'demo_ver_$userId',
-      title: 'Verification Successful',
-      body: 'Your profile is verified. You can now apply to all gigs.',
-      at: now.subtract(const Duration(days: 2)),
-      read: true,
-      kind: _NotifKind.verification,
-      isPersisted: false,
-    ),
-  ];
 }
 
 class _NotificationCard extends StatelessWidget {

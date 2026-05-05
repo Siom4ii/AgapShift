@@ -90,6 +90,8 @@ class Gig {
     required this.category,
     required this.status,
     required this.createdAt,
+    this.workersNeeded,
+    this.isUrgent = false,
   });
 
   final String id;
@@ -104,6 +106,9 @@ class Gig {
   final String category;
   final GigStatus status;
   final DateTime createdAt;
+  /// Openings for this gig when set (Supabase `workers_needed`).
+  final int? workersNeeded;
+  final bool isUrgent;
 }
 
 class GigApplication {

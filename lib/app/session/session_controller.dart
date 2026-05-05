@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../domain/business_identity.dart';
 import '../../domain/enums.dart';
+import '../../domain/worker_identity.dart';
 import '../auth/mock_auth_service.dart';
 import '../storage/kv_store.dart';
 import '../supabase/supabase_config.dart';
@@ -21,6 +22,7 @@ class SessionController extends ChangeNotifier {
         email: null,
         accountStatus: null,
         businessIdentity: null,
+        workerIdentity: null,
       );
 
   static const _kHasSeenGettingStarted = 'agapshift.hasSeenGettingStarted';
@@ -28,7 +30,7 @@ class SessionController extends ChangeNotifier {
   static const _kEmail = 'agapshift.email';
   static const _kOnboardingDone = 'agapshift.onboardingDone';
   static const _kAccountStatus = 'agapshift.accountStatus';
-  /// JSON string of [profiles.identity_snapshot] for instant business profile header.
+  /// JSON string of [profiles.identity_snapshot] (business or worker flow).
   static const _kIdentitySnapshotJson = 'agapshift.profileIdentitySnapshotJson';
   // Pipe-separated mock list of registered account emails — lets us check
   // "does this email have an account?" entirely in KV.
@@ -129,12 +131,14 @@ class SessionController extends ChangeNotifier {
     }
 
     BusinessIdentityDisplay? businessIdentity;
+    WorkerIdentityDisplay? workerIdentity;
     final snapRaw = await _store.getString(_kIdentitySnapshotJson);
     if (snapRaw != null && snapRaw.isNotEmpty) {
       try {
         final decoded = jsonDecode(snapRaw);
         businessIdentity =
             businessIdentityFromProfileIdentitySnapshot(decoded);
+        workerIdentity = workerIdentityFromProfileIdentitySnapshot(decoded);
       } catch (_) {}
     }
 
@@ -165,6 +169,7 @@ class SessionController extends ChangeNotifier {
       email: email,
       accountStatus: accountStatus,
       businessIdentity: businessIdentity,
+      workerIdentity: workerIdentity,
     );
     notifyListeners();
   }
@@ -557,6 +562,7 @@ class SessionController extends ChangeNotifier {
       email: null,
       accountStatus: null,
       businessIdentity: null,
+      workerIdentity: null,
     );
     notifyListeners();
   }

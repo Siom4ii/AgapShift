@@ -4,8 +4,9 @@ import '../../domain/enums.dart';
 import '../../domain/models.dart';
 import '../storage/kv_store.dart';
 import 'qr_tokens.dart';
+import 'shift_repository.dart';
 
-class MockShiftRepository {
+class MockShiftRepository implements ShiftRepository {
   MockShiftRepository(this._store, {QrTokenCodec? codec})
       : _codec = codec ?? QrTokenCodec(secret: 'dev-secret-change-me');
 
@@ -15,22 +16,21 @@ class MockShiftRepository {
   static const _kShiftSessions = 'agapshift.shift.sessions'; // list
   static const _kAttendance = 'agapshift.shift.attendance'; // list
 
-  String createCheckInQr({required String gigId}) {
+  @override
+  String createWorkerAttendanceQr({
+    required String gigId,
+    required String workerId,
+    required AttendanceScanType type,
+  }) {
     return _codec.createToken(
       gigId: gigId,
-      type: AttendanceScanType.checkIn,
+      workerId: workerId,
+      type: type,
       expiresAt: DateTime.now().toUtc().add(const Duration(minutes: 10)),
     );
   }
 
-  String createCheckOutQr({required String gigId}) {
-    return _codec.createToken(
-      gigId: gigId,
-      type: AttendanceScanType.checkOut,
-      expiresAt: DateTime.now().toUtc().add(const Duration(minutes: 10)),
-    );
-  }
-
+  @override
   Future<ShiftSession?> getSessionForGig(String gigId) async {
     final all = await listShiftSessions();
     for (final s in all) {
@@ -39,6 +39,7 @@ class MockShiftRepository {
     return null;
   }
 
+  @override
   Future<List<ShiftSession>> listShiftSessions() async {
     final raw = await _store.getString(_kShiftSessions);
     if (raw == null || raw.isEmpty) return [];
@@ -46,6 +47,7 @@ class MockShiftRepository {
     return decoded.map((e) => _sessionFromJson(e as Map<String, dynamic>)).toList();
   }
 
+  @override
   Future<List<AttendanceRecord>> listAttendanceForGig(String gigId) async {
     final raw = await _store.getString(_kAttendance);
     if (raw == null || raw.isEmpty) return [];
@@ -57,27 +59,35 @@ class MockShiftRepository {
       ..sort((a, b) => a.scannedAt.compareTo(b.scannedAt));
   }
 
-  Future<ShiftSession> scanQr({
+  @override
+  Future<ShiftAttendanceScanResult> scanWorkerAttendanceQr({
     required String qrToken,
-    required String gigId,
-    required String workerId,
     required String businessId,
-    required AttendanceScanType type,
     DateTime? now,
   }) async {
     final n = now ?? DateTime.now().toUtc();
-    final validation = _codec.validate(token: qrToken, gigId: gigId, type: type, now: n);
-    if (!validation.ok) throw StateError(validation.reason!);
+    final parsed = _codec.parseWorkerAttendance(token: qrToken, now: n);
+    if (!parsed.ok) throw StateError(parsed.reason!);
 
-    // Prevent duplicate scans.
+    final gigId = parsed.gigId!;
+    final workerId = parsed.workerId!;
+    final type = parsed.type!;
+
     final attendance = await listAttendanceForGig(gigId);
     final already = attendance.any((a) => a.workerId == workerId && a.type == type);
     if (already) throw StateError('Already scanned ${type.name}');
 
-    // Create/Update session.
     final sessions = await listShiftSessions();
     final idx = sessions.indexWhere((s) => s.gigId == gigId && s.workerId == workerId);
     final existing = idx >= 0 ? sessions[idx] : null;
+
+    if (type == AttendanceScanType.checkOut) {
+      final ci = existing?.checkInAt;
+      if (ci == null) {
+        throw StateError('Check in required before check out');
+      }
+    }
+
     final sessionId = existing?.id ?? 'shift_${DateTime.now().microsecondsSinceEpoch}';
     final updated = ShiftSession(
       id: sessionId,
@@ -95,7 +105,6 @@ class MockShiftRepository {
     }
     await _saveSessions(updatedSessions);
 
-    // Record attendance event.
     final rawAll = await _store.getString(_kAttendance);
     final all = (rawAll == null || rawAll.isEmpty)
         ? <AttendanceRecord>[]
@@ -111,7 +120,7 @@ class MockShiftRepository {
     );
     await _saveAttendance([att, ...all]);
 
-    return updated;
+    return (session: updated, scanType: type);
   }
 
   Future<void> _saveSessions(List<ShiftSession> sessions) async {
@@ -156,4 +165,3 @@ class MockShiftRepository {
         scannedAt: DateTime.parse(j['scannedAt'] as String),
       );
 }
-

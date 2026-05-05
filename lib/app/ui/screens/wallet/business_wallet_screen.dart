@@ -3,11 +3,19 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../theme/agap_colors.dart';
 import '../../widgets/shell_screen_polish.dart';
+import '../../widgets/success_feedback.dart';
 
 class BusinessWalletScreen extends StatefulWidget {
-  const BusinessWalletScreen({super.key, this.onOpenNotifications});
+  const BusinessWalletScreen({
+    super.key,
+    this.onOpenNotifications,
+    this.onOpenInbox,
+    this.notificationUnreadCount = 0,
+  });
 
   final VoidCallback? onOpenNotifications;
+  final VoidCallback? onOpenInbox;
+  final int notificationUnreadCount;
 
   @override
   State<BusinessWalletScreen> createState() => _BusinessWalletScreenState();
@@ -172,10 +180,9 @@ class _BusinessWalletScreenState extends State<BusinessWalletScreen> {
                             ),
                             onPressed: () {
                               Navigator.of(ctx).pop();
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Top-up started (demo)'),
-                                ),
+                              showSuccessSnackBar(
+                                context,
+                                'Top-up started (demo)',
                               );
                             },
                             child: Text(
@@ -246,35 +253,68 @@ class _BusinessWalletScreenState extends State<BusinessWalletScreen> {
                           ),
                         ),
                       ),
-                      if (widget.onOpenNotifications != null)
-                        Material(
-                          color: Colors.white.withValues(alpha: 0.22),
-                          shape: const CircleBorder(),
-                          clipBehavior: Clip.antiAlias,
-                          child: IconButton(
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(
-                              minWidth: 44,
-                              minHeight: 44,
-                            ),
-                            onPressed: widget.onOpenNotifications,
-                            icon: Badge(
-                              label: Text(
-                                '2',
-                                style: GoogleFonts.inter(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w800,
-                                  color: Colors.white,
+                      if (widget.onOpenInbox != null ||
+                          widget.onOpenNotifications != null)
+                        Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            if (widget.onOpenInbox != null)
+                              Padding(
+                                padding: const EdgeInsets.only(right: 4),
+                                child: Material(
+                                  color: Colors.white.withValues(alpha: 0.22),
+                                  shape: const CircleBorder(),
+                                  clipBehavior: Clip.antiAlias,
+                                  child: IconButton(
+                                    padding: EdgeInsets.zero,
+                                    constraints: const BoxConstraints(
+                                      minWidth: 44,
+                                      minHeight: 44,
+                                    ),
+                                    tooltip: 'Messages',
+                                    onPressed: widget.onOpenInbox,
+                                    icon: const Icon(
+                                      Icons.chat_bubble_outline_rounded,
+                                      color: Colors.white,
+                                      size: 22,
+                                    ),
+                                  ),
                                 ),
                               ),
-                              backgroundColor: Colors.red.shade600,
-                              child: const Icon(
-                                Icons.notifications_outlined,
-                                color: Colors.white,
-                                size: 22,
+                            if (widget.onOpenNotifications != null)
+                              Material(
+                                color: Colors.white.withValues(alpha: 0.22),
+                                shape: const CircleBorder(),
+                                clipBehavior: Clip.antiAlias,
+                                child: IconButton(
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(
+                                    minWidth: 44,
+                                    minHeight: 44,
+                                  ),
+                                  onPressed: widget.onOpenNotifications,
+                                  icon: Badge(
+                                    isLabelVisible: widget.notificationUnreadCount > 0,
+                                    label: Text(
+                                      widget.notificationUnreadCount > 99
+                                          ? '99+'
+                                          : '${widget.notificationUnreadCount}',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w800,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                    backgroundColor: Colors.red.shade600,
+                                    child: const Icon(
+                                      Icons.notifications_outlined,
+                                      color: Colors.white,
+                                      size: 22,
+                                    ),
+                                  ),
+                                ),
                               ),
-                            ),
-                          ),
+                          ],
                         ),
                     ],
                   ),

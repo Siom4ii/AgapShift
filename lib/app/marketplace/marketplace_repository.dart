@@ -21,6 +21,8 @@ abstract class MarketplaceRepository {
     required DateTime endAt,
     required Money pay,
     required String category,
+    int? workersNeeded,
+    bool isUrgent = false,
   });
 
   Future<Gig?> getGig(String gigId);

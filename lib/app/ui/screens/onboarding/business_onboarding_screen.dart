@@ -7,6 +7,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../../marketplace/marketplace_scope.dart';
+import '../../../onboarding/kyc_storage_service.dart';
 import '../../../onboarding/supabase_onboarding_sync.dart';
 import '../../../session/session_models.dart';
 import '../../../supabase/supabase_config.dart';
@@ -107,6 +108,15 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
 
   // Shared by all three kinds
   String? _mayorPermitFile;
+
+  /// Storage paths in [KycStorageService.bucketId] after upload (for admin review).
+  String? _dtiCertStoragePath;
+  String? _ownerGovIdStoragePath;
+  String? _articlesOfPartnershipStoragePath;
+  String? _secCertOfIncorporationStoragePath;
+  String? _secretaryCertStoragePath;
+  String? _mayorPermitStoragePath;
+  bool _businessKycBusy = false;
 
   // Step 4 — Location (same structure as worker: Davao del Sur + optional street)
   String? _locationMunicipality;
@@ -290,6 +300,13 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
     }
   }
 
+  bool get _passwordsMismatch {
+    final p = _password.text;
+    final c = _confirmPassword.text;
+    if (p.isEmpty || c.isEmpty) return false;
+    return p != c;
+  }
+
   bool get _canContinue {
     switch (_step) {
       case 0:
@@ -463,30 +480,76 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
       m['business_kind'] = _kind.name;
     }
     if (completedStep >= 2) {
+      final sole = <String, dynamic>{
+        'owner_legal_name': _ownerLegalName.text.trim(),
+        'trade_name': _tradeName.text.trim(),
+        'tin': _tin.text.trim(),
+      };
+      KycStorageService.putFileRef(
+        sole,
+        'dti_cert',
+        _dtiCertFile,
+        _dtiCertStoragePath,
+      );
+      KycStorageService.putFileRef(
+        sole,
+        'mayor_permit',
+        _mayorPermitFile,
+        _mayorPermitStoragePath,
+      );
+      KycStorageService.putFileRef(
+        sole,
+        'owner_gov_id',
+        _ownerGovIdFile,
+        _ownerGovIdStoragePath,
+      );
+
+      final partnership = <String, dynamic>{
+        'managing_partner_name': _managingPartnerName.text.trim(),
+        'partnership_name': _partnershipName.text.trim(),
+      };
+      KycStorageService.putFileRef(
+        partnership,
+        'articles_of_partnership',
+        _articlesOfPartnershipFile,
+        _articlesOfPartnershipStoragePath,
+      );
+      KycStorageService.putFileRef(
+        partnership,
+        'mayor_permit',
+        _mayorPermitFile,
+        _mayorPermitStoragePath,
+      );
+
+      final corporation = <String, dynamic>{
+        'sec_reg_number': _secRegNumber.text.trim(),
+        'corporate_name': _corporateName.text.trim(),
+        'authorized_rep_title': _authorizedRepTitle.text.trim(),
+      };
+      KycStorageService.putFileRef(
+        corporation,
+        'sec_certificate',
+        _secCertOfIncorporationFile,
+        _secCertOfIncorporationStoragePath,
+      );
+      KycStorageService.putFileRef(
+        corporation,
+        'mayor_permit',
+        _mayorPermitFile,
+        _mayorPermitStoragePath,
+      );
+      KycStorageService.putFileRef(
+        corporation,
+        'secretary_certificate',
+        _secretaryCertFile,
+        _secretaryCertStoragePath,
+      );
+
       m['details'] = {
         'kind': _kind.name,
-        'sole_proprietorship': {
-          'owner_legal_name': _ownerLegalName.text.trim(),
-          'trade_name': _tradeName.text.trim(),
-          'tin': _tin.text.trim(),
-          'dti_cert_file': _dtiCertFile,
-          'mayor_permit_file': _mayorPermitFile,
-          'owner_gov_id_file': _ownerGovIdFile,
-        },
-        'partnership': {
-          'managing_partner_name': _managingPartnerName.text.trim(),
-          'partnership_name': _partnershipName.text.trim(),
-          'articles_of_partnership_file': _articlesOfPartnershipFile,
-          'mayor_permit_file': _mayorPermitFile,
-        },
-        'corporation': {
-          'sec_reg_number': _secRegNumber.text.trim(),
-          'corporate_name': _corporateName.text.trim(),
-          'authorized_rep_title': _authorizedRepTitle.text.trim(),
-          'sec_certificate_file': _secCertOfIncorporationFile,
-          'mayor_permit_file': _mayorPermitFile,
-          'secretary_certificate_file': _secretaryCertFile,
-        },
+        'sole_proprietorship': sole,
+        'partnership': partnership,
+        'corporation': corporation,
       };
     }
     if (completedStep >= 3) {
@@ -562,28 +625,59 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
     });
   }
 
-  Future<void> _pickFile({
-    required String currentValueLabel,
-    required ValueSetter<String> onPicked,
+  Future<void> _pickBusinessDoc({
+    required String documentType,
+    required void Function(String label, String? storagePath) apply,
     required String demoFilename,
   }) async {
-    final picked = await pickKycDocument();
+    if (_businessKycBusy) return;
+    final file = await pickKycDocumentFile();
     if (!mounted) return;
-    if (picked != null) {
-      onPicked(picked);
+    if (file == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text(
+            'No file selected. Picker may be unavailable on this device.',
+          ),
+          action: SnackBarAction(
+            label: 'Use demo',
+            onPressed: () => apply(demoFilename, null),
+          ),
+        ),
+      );
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text(
-          'No file selected. Picker may be unavailable on this device.',
-        ),
-        action: SnackBarAction(
-          label: 'Use demo',
-          onPressed: () => onPicked(demoFilename),
-        ),
-      ),
-    );
+
+    final label = kycFileLabel(file);
+    if (!SupabaseConfig.isConfigured) {
+      apply(label, null);
+      return;
+    }
+
+    setState(() => _businessKycBusy = true);
+    try {
+      final path = await KycStorageService.upload(
+        file: file,
+        flow: 'business',
+        documentType: documentType,
+      );
+      if (!mounted) return;
+      apply(label, path);
+    } on KycUploadTooLargeException catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File must be 10MB or smaller.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not upload document: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _businessKycBusy = false);
+    }
   }
 
   /// Pre-fills only the documents required for the currently-selected
@@ -592,15 +686,21 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
   void _useDemoDocuments() {
     setState(() {
       _mayorPermitFile = 'demo_mayors_permit.pdf';
+      _mayorPermitStoragePath = null;
       switch (_kind) {
         case _BusinessKind.soleProprietorship:
           _dtiCertFile = 'demo_dti_certificate.pdf';
+          _dtiCertStoragePath = null;
           _ownerGovIdFile = 'demo_owner_government_id.jpg';
+          _ownerGovIdStoragePath = null;
         case _BusinessKind.partnership:
           _articlesOfPartnershipFile = 'demo_articles_of_partnership.pdf';
+          _articlesOfPartnershipStoragePath = null;
         case _BusinessKind.corporation:
           _secCertOfIncorporationFile = 'demo_sec_certificate.pdf';
+          _secCertOfIncorporationStoragePath = null;
           _secretaryCertFile = 'demo_secretarys_certificate.pdf';
+          _secretaryCertStoragePath = null;
       }
     });
     ScaffoldMessenger.of(context).showSnackBar(
@@ -735,6 +835,7 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
           email: _email,
           password: _password,
           confirmPassword: _confirmPassword,
+          passwordsMismatch: _passwordsMismatch,
           passwordVisible: _passwordVisible,
           confirmPasswordVisible: _confirmPasswordVisible,
           onTogglePassword: () =>
@@ -752,30 +853,40 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
       case 2:
         return _BusinessDetailsStep(
           kind: _kind,
+          kycBusy: _businessKycBusy,
           // Sole Proprietorship
           ownerLegalName: _ownerLegalName,
           tradeName: _tradeName,
           tin: _tin,
           dtiCertFile: _dtiCertFile,
           ownerGovIdFile: _ownerGovIdFile,
-          onPickDtiCert: () => _pickFile(
-            currentValueLabel: _dtiCertFile ?? '',
-            onPicked: (n) => setState(() => _dtiCertFile = n),
+          onPickDtiCert: () => _pickBusinessDoc(
+            documentType: 'dti_certificate',
             demoFilename: 'demo_dti_certificate.pdf',
+            apply: (label, path) => setState(() {
+              _dtiCertFile = label;
+              _dtiCertStoragePath = path;
+            }),
           ),
-          onPickOwnerGovId: () => _pickFile(
-            currentValueLabel: _ownerGovIdFile ?? '',
-            onPicked: (n) => setState(() => _ownerGovIdFile = n),
+          onPickOwnerGovId: () => _pickBusinessDoc(
+            documentType: 'owner_government_id',
             demoFilename: 'demo_owner_government_id.jpg',
+            apply: (label, path) => setState(() {
+              _ownerGovIdFile = label;
+              _ownerGovIdStoragePath = path;
+            }),
           ),
           // Partnership
           managingPartnerName: _managingPartnerName,
           partnershipName: _partnershipName,
           articlesOfPartnershipFile: _articlesOfPartnershipFile,
-          onPickArticlesOfPartnership: () => _pickFile(
-            currentValueLabel: _articlesOfPartnershipFile ?? '',
-            onPicked: (n) => setState(() => _articlesOfPartnershipFile = n),
+          onPickArticlesOfPartnership: () => _pickBusinessDoc(
+            documentType: 'articles_of_partnership',
             demoFilename: 'demo_articles_of_partnership.pdf',
+            apply: (label, path) => setState(() {
+              _articlesOfPartnershipFile = label;
+              _articlesOfPartnershipStoragePath = path;
+            }),
           ),
           // Corporation
           secRegNumber: _secRegNumber,
@@ -783,22 +894,31 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
           authorizedRepTitle: _authorizedRepTitle,
           secCertOfIncorporationFile: _secCertOfIncorporationFile,
           secretaryCertFile: _secretaryCertFile,
-          onPickSecCertOfIncorporation: () => _pickFile(
-            currentValueLabel: _secCertOfIncorporationFile ?? '',
-            onPicked: (n) => setState(() => _secCertOfIncorporationFile = n),
+          onPickSecCertOfIncorporation: () => _pickBusinessDoc(
+            documentType: 'sec_certificate',
             demoFilename: 'demo_sec_certificate.pdf',
+            apply: (label, path) => setState(() {
+              _secCertOfIncorporationFile = label;
+              _secCertOfIncorporationStoragePath = path;
+            }),
           ),
-          onPickSecretaryCert: () => _pickFile(
-            currentValueLabel: _secretaryCertFile ?? '',
-            onPicked: (n) => setState(() => _secretaryCertFile = n),
+          onPickSecretaryCert: () => _pickBusinessDoc(
+            documentType: 'secretary_certificate',
             demoFilename: 'demo_secretarys_certificate.pdf',
+            apply: (label, path) => setState(() {
+              _secretaryCertFile = label;
+              _secretaryCertStoragePath = path;
+            }),
           ),
           // Shared
           mayorPermitFile: _mayorPermitFile,
-          onPickMayorPermit: () => _pickFile(
-            currentValueLabel: _mayorPermitFile ?? '',
-            onPicked: (n) => setState(() => _mayorPermitFile = n),
+          onPickMayorPermit: () => _pickBusinessDoc(
+            documentType: 'mayor_permit',
             demoFilename: 'demo_mayors_permit.pdf',
+            apply: (label, path) => setState(() {
+              _mayorPermitFile = label;
+              _mayorPermitStoragePath = path;
+            }),
           ),
           onUseDemoDocs: _useDemoDocuments,
           onChanged: () => setState(() {}),
@@ -952,6 +1072,7 @@ class _AccountStep extends StatelessWidget {
     required this.email,
     required this.password,
     required this.confirmPassword,
+    required this.passwordsMismatch,
     required this.passwordVisible,
     required this.confirmPasswordVisible,
     required this.onTogglePassword,
@@ -962,6 +1083,7 @@ class _AccountStep extends StatelessWidget {
   final TextEditingController email;
   final TextEditingController password;
   final TextEditingController confirmPassword;
+  final bool passwordsMismatch;
   final bool passwordVisible;
   final bool confirmPasswordVisible;
   final VoidCallback onTogglePassword;
@@ -989,6 +1111,7 @@ class _AccountStep extends StatelessWidget {
         _RoundedField(
           controller: password,
           hint: 'Create a strong password',
+          hasError: passwordsMismatch,
           obscureText: !passwordVisible,
           suffix: IconButton(
             icon: Icon(
@@ -1007,6 +1130,9 @@ class _AccountStep extends StatelessWidget {
         _RoundedField(
           controller: confirmPassword,
           hint: 'Re-enter your password',
+          hasError: passwordsMismatch,
+          errorMessage:
+              passwordsMismatch ? 'Passwords do not match' : null,
           obscureText: !confirmPasswordVisible,
           suffix: IconButton(
             icon: Icon(
@@ -1188,6 +1314,7 @@ class _BusinessKindCard extends StatelessWidget {
 class _BusinessDetailsStep extends StatelessWidget {
   const _BusinessDetailsStep({
     required this.kind,
+    required this.kycBusy,
     required this.ownerLegalName,
     required this.tradeName,
     required this.tin,
@@ -1213,6 +1340,7 @@ class _BusinessDetailsStep extends StatelessWidget {
   });
 
   final _BusinessKind kind;
+  final bool kycBusy;
 
   // Sole Proprietorship
   final TextEditingController ownerLegalName;
@@ -1247,50 +1375,53 @@ class _BusinessDetailsStep extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const _StepIcon(icon: Icons.description_rounded),
-        const SizedBox(height: 12),
-        _StepCaption(
-          'Provide your ${kind.label.toLowerCase()} details and documents',
-        ),
-        const SizedBox(height: 18),
-        ..._fieldsForKind(),
-        const SizedBox(height: 14),
-        InkWell(
-          borderRadius: BorderRadius.circular(12),
-          onTap: onUseDemoDocs,
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-            decoration: BoxDecoration(
-              color: _mintBg,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: _mintSoft),
-            ),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.check_box_rounded,
-                  color: _brandGreenDark,
-                  size: 18,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    'Demo mode: tap to simulate uploading every required document',
-                    style: GoogleFonts.inter(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                      color: _brandGreenDark,
+    return AbsorbPointer(
+      absorbing: kycBusy,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const _StepIcon(icon: Icons.description_rounded),
+          const SizedBox(height: 12),
+          _StepCaption(
+            'Provide your ${kind.label.toLowerCase()} details and documents',
+          ),
+          const SizedBox(height: 18),
+          ..._fieldsForKind(),
+          const SizedBox(height: 14),
+          InkWell(
+            borderRadius: BorderRadius.circular(12),
+            onTap: onUseDemoDocs,
+            child: Container(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+              decoration: BoxDecoration(
+                color: _mintBg,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _mintSoft),
+              ),
+              child: Row(
+                children: [
+                  const Icon(
+                    Icons.check_box_rounded,
+                    color: _brandGreenDark,
+                    size: 18,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Demo mode: tap to simulate uploading every required document',
+                      style: GoogleFonts.inter(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w700,
+                        color: _brandGreenDark,
+                      ),
                     ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -2844,6 +2975,8 @@ class _RoundedField extends StatelessWidget {
     this.maxLength,
     this.inputFormatters,
     this.onChanged,
+    this.hasError = false,
+    this.errorMessage,
   });
 
   final TextEditingController controller;
@@ -2854,46 +2987,76 @@ class _RoundedField extends StatelessWidget {
   final int? maxLength;
   final List<TextInputFormatter>? inputFormatters;
   final ValueChanged<String>? onChanged;
+  final bool hasError;
+  final String? errorMessage;
+
+  static const _errorRed = Color(0xFFEF4444);
+  static const _errorRedDeep = Color(0xFFDC2626);
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      obscureText: obscureText,
-      keyboardType: keyboardType,
-      maxLines: 1,
-      maxLength: maxLength,
-      inputFormatters: inputFormatters,
-      onChanged: onChanged,
-      style: GoogleFonts.inter(
-        fontSize: 14,
-        fontWeight: FontWeight.w600,
-        color: const Color(0xFF0F172A),
-      ),
-      decoration: InputDecoration(
-        hintText: hint,
-        hintStyle: GoogleFonts.inter(
-          fontSize: 13.5,
-          color: const Color(0xFFB6BFCB),
-          fontWeight: FontWeight.w600,
+    final enabledSide = BorderSide(
+      color: hasError ? _errorRed : const Color(0xFFE2E8F0),
+      width: hasError ? 1.4 : 1,
+    );
+    final focusedSide = BorderSide(
+      color: hasError ? _errorRedDeep : _brandGreen,
+      width: 1.4,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          controller: controller,
+          obscureText: obscureText,
+          keyboardType: keyboardType,
+          maxLines: 1,
+          maxLength: maxLength,
+          inputFormatters: inputFormatters,
+          onChanged: onChanged,
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF0F172A),
+          ),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: GoogleFonts.inter(
+              fontSize: 13.5,
+              color: const Color(0xFFB6BFCB),
+              fontWeight: FontWeight.w600,
+            ),
+            filled: true,
+            fillColor: Colors.white,
+            suffixIcon: suffix,
+            counterText: maxLength != null ? '' : null,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 14,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: enabledSide,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: focusedSide,
+            ),
+          ),
         ),
-        filled: true,
-        fillColor: Colors.white,
-        suffixIcon: suffix,
-        counterText: maxLength != null ? '' : null,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 14,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: _brandGreen, width: 1.4),
-        ),
-      ),
+        if (errorMessage != null && errorMessage!.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6, left: 4),
+            child: Text(
+              errorMessage!,
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: _errorRedDeep,
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

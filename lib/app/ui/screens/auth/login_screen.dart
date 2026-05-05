@@ -29,6 +29,7 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final _email = TextEditingController();
   final _password = TextEditingController();
+  final _passwordFocus = FocusNode();
   bool _passwordVisible = false;
   bool _submitting = false;
   String? _emailError;
@@ -38,6 +39,7 @@ class _LoginScreenState extends State<LoginScreen> {
   void dispose() {
     _email.dispose();
     _password.dispose();
+    _passwordFocus.dispose();
     super.dispose();
   }
 
@@ -71,16 +73,12 @@ class _LoginScreenState extends State<LoginScreen> {
         await _showNoAccountAlert();
       case LoginResult.invalidCredentials:
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            behavior: SnackBarBehavior.floating,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-            content: Text(
-              "We couldn't sign you in. Check your email and password.",
-              style: GoogleFonts.inter(fontWeight: FontWeight.w600),
-            ),
-          ),
-        );
+        setState(() {
+          _passwordError = 'Incorrect password. Check and try again.';
+        });
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _passwordFocus.requestFocus();
+        });
       case LoginResult.unexpectedError:
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
@@ -324,12 +322,16 @@ class _LoginScreenState extends State<LoginScreen> {
                           keyboardType: TextInputType.emailAddress,
                           autofillHints: const [AutofillHints.email, AutofillHints.username],
                           errorText: _emailError,
-                          onChanged: (_) => setState(() => _emailError = null),
+                          onChanged: (_) => setState(() {
+                            _emailError = null;
+                            _passwordError = null;
+                          }),
                         ),
                         const SizedBox(height: 18),
                         _Label('Password'),
                         _Field(
                           controller: _password,
+                          focusNode: _passwordFocus,
                           hint: 'Enter your password',
                           obscureText: !_passwordVisible,
                           autofillHints: const [AutofillHints.password],
@@ -586,6 +588,7 @@ class _Field extends StatelessWidget {
   const _Field({
     required this.controller,
     required this.hint,
+    this.focusNode,
     this.keyboardType,
     this.obscureText = false,
     this.autofillHints,
@@ -597,6 +600,7 @@ class _Field extends StatelessWidget {
 
   final TextEditingController controller;
   final String hint;
+  final FocusNode? focusNode;
   final TextInputType? keyboardType;
   final bool obscureText;
   final Iterable<String>? autofillHints;
@@ -609,6 +613,7 @@ class _Field extends StatelessWidget {
   Widget build(BuildContext context) {
     return TextField(
       controller: controller,
+      focusNode: focusNode,
       keyboardType: keyboardType,
       obscureText: obscureText,
       autofillHints: autofillHints,
@@ -627,7 +632,9 @@ class _Field extends StatelessWidget {
           fontWeight: FontWeight.w600,
         ),
         filled: true,
-        fillColor: AgapColors.loginFieldFill,
+        fillColor: errorText != null
+            ? const Color(0xFFFEF2F2)
+            : AgapColors.loginFieldFill,
         suffixIcon: suffix,
         errorText: errorText,
         contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),

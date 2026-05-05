@@ -21,7 +21,8 @@ class BusinessShellBottomNav extends StatelessWidget {
   static const double _fabSize = 52;
 
   /// Tall enough for icon+label row plus FAB column without RenderFlex overflow.
-  static const double _barHeight = 88;
+  /// Use with [MediaQuery.padding.bottom] to inset overlays (e.g. modals) above this bar.
+  static const double barHeight = 88;
 
   void _onTap(int slot) {
     if (slot == 2) {
@@ -48,7 +49,7 @@ class BusinessShellBottomNav extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: _barHeight,
+          height: barHeight,
           child: Stack(
             clipBehavior: Clip.none,
             alignment: Alignment.bottomCenter,

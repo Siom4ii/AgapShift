@@ -1,5 +1,6 @@
 import '../../domain/business_identity.dart';
 import '../../domain/enums.dart';
+import '../../domain/worker_identity.dart';
 
 /// New high-level flow:
 /// needsGettingStarted → needsLogin → (login OK) authenticated
@@ -20,6 +21,7 @@ class SessionState {
     required this.email,
     required this.accountStatus,
     this.businessIdentity,
+    this.workerIdentity,
   });
 
   final AuthStage stage;
@@ -31,12 +33,16 @@ class SessionState {
   /// can paint without waiting on a second network round-trip.
   final BusinessIdentityDisplay? businessIdentity;
 
+  /// Cached worker name/bio/skills from [profiles.identity_snapshot] when [flow] is `worker`.
+  final WorkerIdentityDisplay? workerIdentity;
+
   SessionState copyWith({
     AuthStage? stage,
     UserRole? role,
     String? email,
     AccountStatus? accountStatus,
     BusinessIdentityDisplay? businessIdentity,
+    WorkerIdentityDisplay? workerIdentity,
   }) {
     return SessionState(
       stage: stage ?? this.stage,
@@ -44,6 +50,7 @@ class SessionState {
       email: email ?? this.email,
       accountStatus: accountStatus ?? this.accountStatus,
       businessIdentity: businessIdentity ?? this.businessIdentity,
+      workerIdentity: workerIdentity ?? this.workerIdentity,
     );
   }
 }

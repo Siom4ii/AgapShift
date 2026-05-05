@@ -4,35 +4,47 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
 import '../../../marketplace/marketplace_repository.dart';
-import '../../../notifications/mock_notification_repository.dart';
-import '../../../payments/mock_payments_repository.dart';
+import '../../../profile/worker_display_names.dart';
+import '../../../notifications/notification_repository.dart';
+import '../../../payments/payments_repository.dart';
+import '../../../ratings/mock_ratings_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
+import '../../../shift/shift_repository.dart';
 import '../../theme/agap_colors.dart';
 import '../../widgets/shell_screen_polish.dart';
 import '../marketplace/business_gig_applicants_screen.dart';
+import '../marketplace/business_gigs_screen.dart';
 
 class BusinessHomeScreen extends StatefulWidget {
   const BusinessHomeScreen({
     super.key,
     required this.repo,
     required this.session,
+    required this.shiftRepo,
     required this.notifications,
     required this.payments,
+    required this.ratings,
     required this.onPostJob,
     required this.onFindWorkers,
     required this.onOpenWallet,
     required this.onOpenNotifications,
+    required this.onOpenInbox,
+    this.notificationUnreadCount = 0,
   });
 
   final MarketplaceRepository repo;
   final SessionController session;
-  final MockNotificationRepository notifications;
-  final MockPaymentsRepository payments;
+  final ShiftRepository shiftRepo;
+  final NotificationRepository notifications;
+  final PaymentsRepository payments;
+  final MockRatingsRepository ratings;
   final VoidCallback onPostJob;
   final VoidCallback onFindWorkers;
   final VoidCallback onOpenWallet;
   final VoidCallback onOpenNotifications;
+  final VoidCallback onOpenInbox;
+  final int notificationUnreadCount;
 
   @override
   State<BusinessHomeScreen> createState() => _BusinessHomeScreenState();
@@ -40,7 +52,16 @@ class BusinessHomeScreen extends StatefulWidget {
 
 class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
   List<Gig> _gigs = const [];
+  List<GigApplication> _applications = const [];
   bool _loading = true;
+
+  int _totalHired = 0;
+  int _pendingApplicantCount = 0;
+  double _businessRatingAvg = 0;
+  int _walletAvailableCentavos = 0;
+  int _totalSpentCentavos = 0;
+  List<_Applicant> _recentApplicants = const [];
+  List<_ExpenseRow> _monthlyExpenses = const [];
 
   static final _headerGradient = LinearGradient(
     colors: [
@@ -51,37 +72,6 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
-
-  static const _applicants = [
-    _Applicant(
-      initials: 'JC',
-      name: 'Juan dela Cruz',
-      tags: 'Warehouse, Delivery',
-      rating: 4.8,
-      km: 0.5,
-    ),
-    _Applicant(
-      initials: 'MS',
-      name: 'Maria Santos',
-      tags: 'Food Service',
-      rating: 4.9,
-      km: 1.1,
-    ),
-    _Applicant(
-      initials: 'JR',
-      name: 'Jose Ramos',
-      tags: 'Retail, Events',
-      rating: 4.6,
-      km: 2.0,
-    ),
-  ];
-
-  static const _expenses = [
-    _ExpenseRow(label: 'Warehouse Staff', amount: 12400),
-    _ExpenseRow(label: 'Food Service', amount: 8250),
-    _ExpenseRow(label: 'Retail Staff', amount: 6400),
-    _ExpenseRow(label: 'Events Crew', amount: 3500),
-  ];
 
   @override
   void initState() {
@@ -96,14 +86,134 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
       final all = await widget.repo.listGigs();
       final mine = all.where((g) => g.businessId == businessId).toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+      final apps = await widget.repo.listApplications();
+      final wallet = await widget.payments.getWallet(businessId);
+      final ledger = await widget.payments.listLedger(businessId);
+      final avgRating = await widget.ratings.averageForUser(businessId);
+
+      final myGigIds = mine.map((g) => g.id).toSet();
+      final gigById = {for (final g in mine) g.id: g};
+
+      final hired = apps
+          .where(
+            (a) =>
+                myGigIds.contains(a.gigId) &&
+                a.status == ApplicationStatus.hired,
+          )
+          .length;
+      final pending = apps
+          .where(
+            (a) =>
+                myGigIds.contains(a.gigId) &&
+                a.status == ApplicationStatus.applied,
+          )
+          .length;
+
+      var spentCentavos = 0;
+      for (final t in ledger) {
+        if (t.userId == businessId &&
+            t.type == TransactionType.escrowFunding) {
+          spentCentavos += t.amount.amount;
+        }
+      }
+
+      final now = DateTime.now();
+      final monthStart = DateTime(now.year, now.month, 1);
+      final monthFundings = ledger.where((t) {
+        return t.userId == businessId &&
+            t.type == TransactionType.escrowFunding &&
+            !t.createdAt.toLocal().isBefore(monthStart);
+      }).toList();
+
+      final spendByCategory = <String, int>{};
+      for (final t in monthFundings) {
+        final gid = t.gigId;
+        if (gid == null) continue;
+        var g = gigById[gid];
+        g ??= await widget.repo.getGig(gid);
+        final label = g?.category.trim().isNotEmpty == true
+            ? g!.category
+            : 'Jobs';
+        spendByCategory[label] =
+            (spendByCategory[label] ?? 0) + t.amount.amount;
+      }
+
+      final expenseRows = <_ExpenseRow>[];
+      for (final e in spendByCategory.entries) {
+        final pesos = (e.value / 100).round();
+        if (pesos > 0) {
+          expenseRows.add(_ExpenseRow(label: e.key, amount: pesos));
+        }
+      }
+      expenseRows.sort((a, b) => b.amount.compareTo(a.amount));
+
+      final pendingApps = apps
+          .where(
+            (a) =>
+                myGigIds.contains(a.gigId) &&
+                a.status == ApplicationStatus.applied,
+          )
+          .toList()
+        ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      final topPending = pendingApps.take(5).toList();
+      final nameByWorker = await fetchWorkerDisplayNamesById(
+        topPending.map((a) => a.workerId).toSet(),
+      );
+
+      final recent = <_Applicant>[];
+      for (final app in topPending) {
+        final gig = gigById[app.gigId];
+        final workerAvg =
+            await widget.ratings.averageForUser(app.workerId);
+        final resolved = nameByWorker[app.workerId];
+        final name = resolved != null && resolved.isNotEmpty
+            ? resolved
+            : applicantDisplayNameFallback(app.workerId);
+        recent.add(
+          _Applicant(
+            initials: applicantInitialsFromName(name, app.workerId),
+            name: name,
+            tags: gig != null ? 'Applied · ${gig.title}' : 'Pending application',
+            rating: workerAvg > 0 ? workerAvg : 0,
+            km: 0,
+          ),
+        );
+      }
+
       if (!mounted) return;
-      setState(() => _gigs = mine);
+      setState(() {
+        _gigs = mine;
+        _applications = apps;
+        _totalHired = hired;
+        _pendingApplicantCount = pending;
+        _businessRatingAvg = avgRating;
+        _walletAvailableCentavos = wallet.available.amount;
+        _totalSpentCentavos = spentCentavos;
+        _monthlyExpenses = expenseRows;
+        _recentApplicants = recent;
+      });
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
 
-  String get _bizName => _businessDisplayName(widget.session.state.email ?? '');
+  /// Registered trade / corporate name from onboarding (`identity_snapshot`).
+  String get _businessName {
+    final n = widget.session.state.businessIdentity?.displayName.trim();
+    if (n != null && n.isNotEmpty) return n;
+    return _businessDisplayName(widget.session.state.email ?? '');
+  }
+
+  String get _ratingHeader =>
+      _businessRatingAvg > 0 ? '${_businessRatingAvg.toStringAsFixed(1)}★' : '—';
+
+  int _hiredCountForGig(String gigId) => _applications
+      .where(
+        (a) =>
+            a.gigId == gigId && a.status == ApplicationStatus.hired,
+      )
+      .length;
   bool get _verified =>
       widget.session.state.accountStatus == AccountStatus.verified;
 
@@ -114,8 +224,26 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
           repo: widget.repo,
           notifications: widget.notifications,
           payments: widget.payments,
+          ratings: widget.ratings,
           session: widget.session,
+          shiftRepo: widget.shiftRepo,
           gig: gig,
+        ),
+      ),
+    );
+    await _load();
+  }
+
+  Future<void> _openManageJobPosts() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => BusinessGigsScreen(
+          repo: widget.repo,
+          notifications: widget.notifications,
+          payments: widget.payments,
+          ratings: widget.ratings,
+          session: widget.session,
+          shiftRepo: widget.shiftRepo,
         ),
       ),
     );
@@ -159,7 +287,7 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
                                 ),
                                 const SizedBox(height: 6),
                                 Text(
-                                  _bizName,
+                                  _businessName,
                                   style: GoogleFonts.inter(
                                     fontSize: 26,
                                     fontWeight: FontWeight.w800,
@@ -196,34 +324,62 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
                               ],
                             ),
                           ),
-                          Material(
-                            color: Colors.white.withValues(alpha: 0.22),
-                            shape: const CircleBorder(),
-                            clipBehavior: Clip.antiAlias,
-                            child: IconButton(
-                              padding: EdgeInsets.zero,
-                              constraints: const BoxConstraints(
-                                minWidth: 44,
-                                minHeight: 44,
-                              ),
-                              onPressed: widget.onOpenNotifications,
-                              icon: Badge(
-                                label: Text(
-                                  '2',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w800,
+                          Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Material(
+                                color: Colors.white.withValues(alpha: 0.22),
+                                shape: const CircleBorder(),
+                                clipBehavior: Clip.antiAlias,
+                                child: IconButton(
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(
+                                    minWidth: 44,
+                                    minHeight: 44,
+                                  ),
+                                  onPressed: widget.onOpenInbox,
+                                  tooltip: 'Messages',
+                                  icon: const Icon(
+                                    Icons.chat_bubble_outline_rounded,
                                     color: Colors.white,
+                                    size: 22,
                                   ),
                                 ),
-                                backgroundColor: Colors.red.shade600,
-                                child: const Icon(
-                                  Icons.notifications_outlined,
-                                  color: Colors.white,
-                                  size: 22,
+                              ),
+                              const SizedBox(width: 4),
+                              Material(
+                                color: Colors.white.withValues(alpha: 0.22),
+                                shape: const CircleBorder(),
+                                clipBehavior: Clip.antiAlias,
+                                child: IconButton(
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(
+                                    minWidth: 44,
+                                    minHeight: 44,
+                                  ),
+                                  onPressed: widget.onOpenNotifications,
+                                  icon: Badge(
+                                    isLabelVisible: widget.notificationUnreadCount > 0,
+                                    label: Text(
+                                      widget.notificationUnreadCount > 99
+                                          ? '99+'
+                                          : '${widget.notificationUnreadCount}',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w800,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                    backgroundColor: Colors.red.shade600,
+                                    child: const Icon(
+                                      Icons.notifications_outlined,
+                                      color: Colors.white,
+                                      size: 22,
+                                    ),
+                                  ),
                                 ),
                               ),
-                            ),
+                            ],
                           ),
                         ],
                       ),
@@ -235,7 +391,7 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
                               icon: Icons.groups_rounded,
                               iconColor: const Color(0xFF7C3AED),
                               label: 'Total Hired',
-                              value: '124',
+                              value: '$_totalHired',
                             ),
                           ),
                           const SizedBox(width: 10),
@@ -254,7 +410,7 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
                               icon: Icons.star_rounded,
                               iconColor: const Color(0xFFFFD700),
                               label: 'Rating',
-                              value: '4.7★',
+                              value: _ratingHeader,
                             ),
                           ),
                         ],
@@ -291,7 +447,9 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
                                 filled: false,
                                 icon: Icons.person_search_rounded,
                                 title: 'Find Workers',
-                                subtitle: '4 available now',
+                                subtitle: _pendingApplicantCount == 0
+                                    ? 'No pending applicants'
+                                    : '$_pendingApplicantCount pending now',
                                 onTap: widget.onFindWorkers,
                               ),
                             ),
@@ -331,7 +489,9 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
                                 Expanded(
                                   child: _WalletMini(
                                     label: 'Available',
-                                    value: '₱15.5k',
+                                    value: _formatPesoCompact(
+                                      _walletAvailableCentavos,
+                                    ),
                                     valueColor: AgapColors.businessGreen,
                                     bg: AgapColors.businessMint,
                                   ),
@@ -340,7 +500,9 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
                                 Expanded(
                                   child: _WalletMini(
                                     label: 'Total Spent',
-                                    value: '₱48.2k',
+                                    value: _formatPesoCompact(
+                                      _totalSpentCentavos,
+                                    ),
                                     valueColor: const Color(0xFF111827),
                                     bg: const Color(0xFFF3F4F6),
                                   ),
@@ -370,9 +532,9 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
                       ),
                     ),
                     TextButton(
-                      onPressed: widget.onPostJob,
+                      onPressed: _openManageJobPosts,
                       child: Text(
-                        '+ New',
+                        'Manage all ›',
                         style: GoogleFonts.inter(
                           fontWeight: FontWeight.w800,
                           color: AgapColors.businessGreen,
@@ -419,6 +581,7 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
                         child: _ActiveJobCard(
                           gig: g,
                           index: i,
+                          hiredCount: _hiredCountForGig(g.id),
                           onOpen: () => _openApplicants(g),
                         ),
                       ),
@@ -441,9 +604,9 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
                       ),
                     ),
                     TextButton(
-                      onPressed: widget.onFindWorkers,
+                      onPressed: _openManageJobPosts,
                       child: Text(
-                        'View all ›',
+                        'Manage posts ›',
                         style: GoogleFonts.inter(
                           fontWeight: FontWeight.w800,
                           color: AgapColors.businessGreen,
@@ -454,17 +617,35 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
                 ),
               ),
             ),
-            SliverPadding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
-              sliver: SliverList.separated(
-                itemCount: _applicants.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 10),
-                itemBuilder: (context, i) => ShellStaggerItem(
-                  index: i,
-                  child: ShellLift(child: _ApplicantTile(a: _applicants[i])),
+            if (_recentApplicants.isNotEmpty)
+              SliverPadding(
+                padding: const EdgeInsets.fromLTRB(20, 0, 20, 0),
+                sliver: SliverList.separated(
+                  itemCount: _recentApplicants.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  itemBuilder: (context, i) => ShellStaggerItem(
+                    index: i,
+                    child: ShellLift(
+                      child: _ApplicantTile(a: _recentApplicants[i]),
+                    ),
+                  ),
+                ),
+              )
+            else
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                  child: _SectionCard(
+                    child: Text(
+                      'No pending applicants right now.',
+                      style: GoogleFonts.inter(
+                        color: AgapColors.textMuted,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
                 ),
               ),
-            ),
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
@@ -491,19 +672,28 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
               child: Padding(
                 padding: EdgeInsets.fromLTRB(20, 0, 20, 40 + bottomInset),
                 child: _SectionCard(
-                  child: Column(
-                    children: [
-                      for (var i = 0; i < _expenses.length; i++) ...[
-                        if (i > 0) const SizedBox(height: 14),
-                        _ExpenseBar(
-                          row: _expenses[i],
-                          maxAmount: _expenses
-                              .map((e) => e.amount)
-                              .reduce((a, b) => a > b ? a : b),
+                  child: _monthlyExpenses.isEmpty
+                      ? Text(
+                          'No escrow funding recorded this month.',
+                          style: GoogleFonts.inter(
+                            color: AgapColors.textMuted,
+                            fontWeight: FontWeight.w600,
+                            height: 1.4,
+                          ),
+                        )
+                      : Column(
+                          children: [
+                            for (var i = 0; i < _monthlyExpenses.length; i++) ...[
+                              if (i > 0) const SizedBox(height: 14),
+                              _ExpenseBar(
+                                row: _monthlyExpenses[i],
+                                maxAmount: _monthlyExpenses
+                                    .map((e) => e.amount)
+                                    .reduce((a, b) => a > b ? a : b),
+                              ),
+                            ],
+                          ],
                         ),
-                      ],
-                    ],
-                  ),
                 ),
               ),
             ),
@@ -529,40 +719,57 @@ class _HeaderStat extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            icon,
-            color: iconColor ?? Colors.white.withValues(alpha: 0.95),
-            size: 22,
-          ),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: GoogleFonts.inter(
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
-              color: Colors.white,
+    return SizedBox(
+      height: 88,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: 0.14),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              icon,
+              color: iconColor ?? Colors.white.withValues(alpha: 0.95),
+              size: 18,
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            style: GoogleFonts.inter(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: Colors.white.withValues(alpha: 0.85),
+            const SizedBox(height: 4),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.start,
+                children: [
+                  Text(
+                    value,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.inter(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      height: 1.1,
+                      color: Colors.white,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    label,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      height: 1.15,
+                      color: Colors.white.withValues(alpha: 0.85),
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -602,40 +809,40 @@ class _QuickActionCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(16),
         child: Padding(
-          padding: const EdgeInsets.all(14),
+          padding: const EdgeInsets.all(12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Icon(
                 icon,
                 color: filled ? Colors.white : AgapColors.businessGreen,
-                size: 26,
+                size: 22,
               ),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    title,
-                    style: GoogleFonts.inter(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w800,
-                      color: filled ? Colors.white : const Color(0xFF111827),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    subtitle,
-                    style: GoogleFonts.inter(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      height: 1.25,
-                      color: filled
-                          ? Colors.white.withValues(alpha: 0.92)
-                          : AgapColors.textMuted,
-                    ),
-                  ),
-                ],
+              const Spacer(),
+              Text(
+                title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.inter(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w800,
+                  height: 1.15,
+                  color: filled ? Colors.white : const Color(0xFF111827),
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.inter(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                  height: 1.2,
+                  color: filled
+                      ? Colors.white.withValues(alpha: 0.92)
+                      : AgapColors.textMuted,
+                ),
               ),
             ],
           ),
@@ -723,11 +930,13 @@ class _ActiveJobCard extends StatelessWidget {
   const _ActiveJobCard({
     required this.gig,
     required this.index,
+    required this.hiredCount,
     required this.onOpen,
   });
 
   final Gig gig;
   final int index;
+  final int hiredCount;
   final VoidCallback onOpen;
 
   static const _icons = [
@@ -739,11 +948,11 @@ class _ActiveJobCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final slots = 3 + (gig.id.hashCode.abs() % 3);
-    final filled = gig.status == GigStatus.filled
-        ? slots
-        : (gig.id.hashCode.abs() % (slots)) + 1;
-    final frac = (filled / slots).clamp(0.0, 1.0);
+    final slots = (gig.workersNeeded != null && gig.workersNeeded! > 0)
+        ? gig.workersNeeded!
+        : 1;
+    final filled = hiredCount.clamp(0, slots);
+    final frac = slots == 0 ? 0.0 : (filled / slots).clamp(0.0, 1.0);
     final dayPay = (gig.pay.amount / 100).round();
     final icon = _icons[index % _icons.length];
 
@@ -932,7 +1141,7 @@ class _ApplicantTile extends StatelessWidget {
                     color: const Color(0xFFEAB308),
                   ),
                   Text(
-                    a.rating.toStringAsFixed(1),
+                    a.rating > 0 ? a.rating.toStringAsFixed(1) : '—',
                     style: GoogleFonts.inter(fontWeight: FontWeight.w800),
                   ),
                 ],
@@ -1005,6 +1214,16 @@ class _ExpenseBar extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Wallet header — compact peso from minor units (centavos).
+String _formatPesoCompact(int centavos) {
+  final p = centavos / 100.0;
+  if (p <= 0) return '₱0';
+  if (p >= 1000000) return '₱${(p / 1000000).toStringAsFixed(1)}M';
+  if (p >= 1000) return '₱${(p / 1000).toStringAsFixed(1)}k';
+  if (p == p.roundToDouble()) return '₱${p.round()}';
+  return '₱${p.toStringAsFixed(0)}';
 }
 
 String _formatThousands(int n) {

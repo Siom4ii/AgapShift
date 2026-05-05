@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../../onboarding/kyc_storage_service.dart';
+import '../../../supabase/supabase_config.dart';
 import '../../theme/agap_colors.dart';
 import '../../widgets/kyc_upload_zone.dart';
 
@@ -23,6 +25,7 @@ class _WorkerIdentityVerificationScreenState extends State<WorkerIdentityVerific
   String? _idBack;
   bool _selfieDone = false;
   bool _submitting = false;
+  bool _uploadBusy = false;
 
   double get _progress {
     var p = 0.12;
@@ -34,54 +37,119 @@ class _WorkerIdentityVerificationScreenState extends State<WorkerIdentityVerific
 
   bool get _canContinue => _idFront != null && _idBack != null && _selfieDone;
 
-  void _pickIdSide({required bool front}) {
-    pickKycDocument().then((n) {
-      if (!mounted) return;
-      if (n != null) {
-        setState(() {
-          if (front) {
-            _idFront = n;
-          } else {
-            _idBack = n;
-          }
-        });
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('No file selected. Picker may be unavailable on this device.'),
-            action: SnackBarAction(
-              label: 'Use demo',
-              onPressed: () => setState(() {
-                if (front) {
-                  _idFront = 'demo_id_front.jpg';
-                } else {
-                  _idBack = 'demo_id_back.jpg';
-                }
-              }),
-            ),
+  Future<void> _pickIdSide({required bool front}) async {
+    if (_uploadBusy) return;
+    final file = await pickKycDocumentFile();
+    if (!mounted) return;
+    if (file == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('No file selected. Picker may be unavailable on this device.'),
+          action: SnackBarAction(
+            label: 'Use demo',
+            onPressed: () => setState(() {
+              if (front) {
+                _idFront = 'demo_id_front.jpg';
+              } else {
+                _idBack = 'demo_id_back.jpg';
+              }
+            }),
           ),
+        ),
+      );
+      return;
+    }
+
+    final label = kycFileLabel(file);
+    if (!SupabaseConfig.isConfigured) {
+      setState(() {
+        if (front) {
+          _idFront = label;
+        } else {
+          _idBack = label;
+        }
+      });
+      return;
+    }
+
+    setState(() => _uploadBusy = true);
+    try {
+      await KycStorageService.upload(
+        file: file,
+        flow: 'worker',
+        documentType: front ? 'government_id_front' : 'government_id_back',
+      );
+      if (!mounted) return;
+      setState(() {
+        if (front) {
+          _idFront = label;
+        } else {
+          _idBack = label;
+        }
+      });
+    } on KycUploadTooLargeException catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File must be 10MB or smaller.')),
         );
       }
-    });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not upload ID: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _uploadBusy = false);
+    }
   }
 
-  void _captureSelfie() {
-    pickKycSelfieImage().then((n) {
-      if (!mounted) return;
-      if (n != null) {
-        setState(() => _selfieDone = true);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('No photo selected.'),
-            action: SnackBarAction(
-              label: 'Use demo selfie',
-              onPressed: () => setState(() => _selfieDone = true),
-            ),
+  Future<void> _captureSelfie() async {
+    if (_uploadBusy) return;
+    final file = await pickKycSelfieImageFile();
+    if (!mounted) return;
+    if (file == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('No photo selected.'),
+          action: SnackBarAction(
+            label: 'Use demo selfie',
+            onPressed: () => setState(() => _selfieDone = true),
           ),
+        ),
+      );
+      return;
+    }
+
+    if (!SupabaseConfig.isConfigured) {
+      setState(() => _selfieDone = true);
+      return;
+    }
+
+    setState(() => _uploadBusy = true);
+    try {
+      await KycStorageService.upload(
+        file: file,
+        flow: 'worker',
+        documentType: 'selfie',
+      );
+      if (!mounted) return;
+      setState(() => _selfieDone = true);
+    } on KycUploadTooLargeException catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File must be 10MB or smaller.')),
         );
       }
-    });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not upload selfie: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _uploadBusy = false);
+    }
   }
 
   void _useFullDemoVerification() {
@@ -143,9 +211,11 @@ class _WorkerIdentityVerificationScreenState extends State<WorkerIdentityVerific
       body: Column(
         children: [
           Expanded(
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
-              child: Column(
+            child: AbsorbPointer(
+              absorbing: _uploadBusy,
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 24),
+                child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text(
@@ -240,6 +310,7 @@ class _WorkerIdentityVerificationScreenState extends State<WorkerIdentityVerific
                   ),
                 ],
               ),
+            ),
             ),
           ),
           Padding(

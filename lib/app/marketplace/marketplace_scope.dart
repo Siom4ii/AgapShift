@@ -1,10 +1,19 @@
 import 'package:flutter/material.dart';
 
+import '../messaging/messaging_repository.dart';
+import '../messaging/mock_messaging_repository.dart';
+import '../messaging/supabase_messaging_repository.dart';
 import '../notifications/mock_notification_repository.dart';
+import '../notifications/notification_repository.dart';
+import '../notifications/supabase_notification_repository.dart';
 import '../payments/mock_payments_repository.dart';
+import '../payments/payments_repository.dart';
+import '../payments/supabase_payments_repository.dart';
 import '../ratings/mock_ratings_repository.dart';
 import '../session/session_controller.dart';
 import '../shift/mock_shift_repository.dart';
+import '../shift/shift_repository.dart';
+import '../shift/supabase_shift_repository.dart';
 import '../storage/kv_store.dart';
 import '../supabase/supabase_config.dart';
 import 'marketplace_repository.dart';
@@ -19,21 +28,27 @@ class MarketplaceScope extends InheritedWidget {
     required this.payments,
     required this.ratings,
     required this.shift,
+    required this.messaging,
     required this.session,
     required super.child,
   });
 
   final MarketplaceRepository repo;
-  final MockNotificationRepository notifications;
-  final MockPaymentsRepository payments;
+  final NotificationRepository notifications;
+  final PaymentsRepository payments;
   final MockRatingsRepository ratings;
-  final MockShiftRepository shift;
+  final ShiftRepository shift;
+  final MessagingRepository messaging;
   final SessionController session;
 
   static MarketplaceScope of(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<MarketplaceScope>();
     assert(scope != null, 'MarketplaceScope not found');
     return scope!;
+  }
+
+  static MarketplaceScope? tryOf(BuildContext context) {
+    return context.getInheritedWidgetOfExactType<MarketplaceScope>();
   }
 
   static MarketplaceScope fromStore({
@@ -45,10 +60,19 @@ class MarketplaceScope extends InheritedWidget {
       repo: SupabaseConfig.isConfigured
           ? SupabaseMarketplaceRepository()
           : MockMarketplaceRepository(store),
-      notifications: MockNotificationRepository(store),
-      payments: MockPaymentsRepository(store),
+      notifications: SupabaseConfig.isConfigured
+          ? SupabaseNotificationRepository()
+          : MockNotificationRepository(store),
+      payments: SupabaseConfig.isConfigured
+          ? SupabasePaymentsRepository()
+          : MockPaymentsRepository(store),
       ratings: MockRatingsRepository(store),
-      shift: MockShiftRepository(store),
+      shift: SupabaseConfig.isConfigured
+          ? SupabaseShiftRepository()
+          : MockShiftRepository(store),
+      messaging: SupabaseConfig.isConfigured
+          ? SupabaseMessagingRepository()
+          : MockMessagingRepository(store, session),
       session: session,
       child: child,
     );
@@ -61,6 +85,7 @@ class MarketplaceScope extends InheritedWidget {
         payments != oldWidget.payments ||
         ratings != oldWidget.ratings ||
         shift != oldWidget.shift ||
+        messaging != oldWidget.messaging ||
         session != oldWidget.session;
   }
 }

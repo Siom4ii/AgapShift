@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
 
 import '../../../marketplace/marketplace_repository.dart';
-import '../../../notifications/mock_notification_repository.dart';
-import '../../../payments/mock_payments_repository.dart';
+import '../../../notifications/notification_repository.dart';
+import '../../../payments/payments_repository.dart';
+import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
-import '../../../shift/mock_shift_repository.dart';
+import '../../../shift/shift_repository.dart';
 import '../../../ratings/mock_ratings_repository.dart';
 import '../marketplace/business_create_gig_screen.dart';
+import '../messages/messages_inbox_screen.dart';
 import '../notifications/notifications_screen.dart';
 import '../profile/business_profile_screen.dart';
 import '../wallet/business_wallet_screen.dart';
+import '../../theme/agap_colors.dart';
 import '../../widgets/business_shell_bottom_nav.dart';
+import '../../widgets/success_feedback.dart';
 import '../../widgets/locked_action.dart';
 import '../../widgets/shell_tab_transition.dart';
 import '../../widgets/verification_banner.dart';
@@ -31,9 +35,9 @@ class BusinessDashboardShell extends StatefulWidget {
 
   final Future<void> Function() onSignOut;
   final MarketplaceRepository repo;
-  final MockNotificationRepository notifications;
-  final MockPaymentsRepository payments;
-  final MockShiftRepository shift;
+  final NotificationRepository notifications;
+  final PaymentsRepository payments;
+  final ShiftRepository shift;
   final MockRatingsRepository ratings;
   final SessionController session;
 
@@ -45,15 +49,44 @@ class _BusinessDashboardShellState extends State<BusinessDashboardShell> {
   /// 0 Home, 1 Workers, 2 Wallet, 3 Profile
   int _contentIndex = 0;
   bool _verificationPopupShown = false;
+  int _notifUnread = 0;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted || _verificationPopupShown) return;
-      _verificationPopupShown = true;
-      await showVerificationReviewDialog(context, session: widget.session);
+      if (!mounted) {
+        return;
+      }
+      if (!_verificationPopupShown) {
+        _verificationPopupShown = true;
+        await showVerificationReviewDialog(context, session: widget.session);
+      }
+      if (mounted) {
+        await _syncNotificationBadge();
+      }
     });
+  }
+
+  Future<void> _syncNotificationBadge() async {
+    final uid = appActorId(widget.session, mockFallback: '');
+    if (uid.isEmpty) {
+      if (mounted) {
+        setState(() => _notifUnread = 0);
+      }
+      return;
+    }
+    try {
+      final notifs = await widget.notifications.listForUser(uid);
+      final unread = notifs.where((n) => n.readAt == null).length;
+      if (mounted) {
+        setState(() => _notifUnread = unread);
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() => _notifUnread = 0);
+      }
+    }
   }
 
   Future<void> _openNotifications() async {
@@ -63,6 +96,17 @@ class _BusinessDashboardShellState extends State<BusinessDashboardShell> {
           repo: widget.notifications,
           session: widget.session,
         ),
+      ),
+    );
+    if (mounted) {
+      await _syncNotificationBadge();
+    }
+  }
+
+  Future<void> _openInbox() async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const MessagesInboxScreen(),
       ),
     );
   }
@@ -84,6 +128,8 @@ class _BusinessDashboardShellState extends State<BusinessDashboardShell> {
           onCreated: () async {
             if (Navigator.of(context).canPop()) Navigator.of(context).pop();
             setState(() => _contentIndex = 0);
+            if (!mounted) return;
+            showSuccessSnackBar(context, 'Job posted successfully');
           },
         ),
       ),
@@ -96,41 +142,62 @@ class _BusinessDashboardShellState extends State<BusinessDashboardShell> {
       0 => BusinessHomeScreen(
         repo: widget.repo,
         session: widget.session,
+        shiftRepo: widget.shift,
         notifications: widget.notifications,
         payments: widget.payments,
+        ratings: widget.ratings,
         onPostJob: _openPostJob,
         onFindWorkers: () => setState(() => _contentIndex = 1),
         onOpenWallet: () => setState(() => _contentIndex = 2),
         onOpenNotifications: _openNotifications,
+        onOpenInbox: _openInbox,
+        notificationUnreadCount: _notifUnread,
       ),
-      1 => BusinessFindWorkersScreen(onOpenNotifications: _openNotifications),
-      2 => BusinessWalletScreen(onOpenNotifications: _openNotifications),
+      1 => BusinessFindWorkersScreen(
+        repo: widget.repo,
+        session: widget.session,
+        ratings: widget.ratings,
+        shiftRepo: widget.shift,
+        notifications: widget.notifications,
+        payments: widget.payments,
+        onOpenNotifications: _openNotifications,
+        onOpenInbox: _openInbox,
+        notificationUnreadCount: _notifUnread,
+      ),
+      2 => BusinessWalletScreen(
+        onOpenNotifications: _openNotifications,
+        onOpenInbox: _openInbox,
+        notificationUnreadCount: _notifUnread,
+      ),
       _ => BusinessProfileScreen(
         session: widget.session,
         marketRepo: widget.repo,
         ratings: widget.ratings,
+        payments: widget.payments,
         embedded: true,
         showFollowFab: false,
         onLogout: widget.onSignOut,
         onOpenNotifications: _openNotifications,
+        onOpenInbox: _openInbox,
+        notificationUnreadCount: _notifUnread,
       ),
     };
 
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: AgapColors.pageBackground,
       body: SafeArea(
         bottom: false,
-        child: ColoredBox(
-          color: Theme.of(context).scaffoldBackgroundColor,
-          child: ShellTabTransition(
-            tabIndex: _contentIndex,
-            child: screen,
-          ),
+        child: ShellTabTransition(
+          tabIndex: _contentIndex,
+          child: screen,
         ),
       ),
       bottomNavigationBar: BusinessShellBottomNav(
         contentIndex: _contentIndex,
-        onContentIndex: (i) => setState(() => _contentIndex = i),
+        onContentIndex: (i) {
+          setState(() => _contentIndex = i);
+          _syncNotificationBadge();
+        },
         onPostJob: _openPostJob,
       ),
     );

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../domain/models.dart';
+import '../../../location/davao_del_sur_scope.dart';
 import '../../../marketplace/marketplace_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
@@ -209,20 +210,17 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
         businessId: businessId,
         title: _title.text.trim(),
         description: _buildDescriptionBody(),
-        location: const GeoPoint(lat: 14.5995, lng: 120.9842),
+        location: DavaoDelSurScope.defaultCenter,
         addressLabel: _address.text.trim(),
         startAt: startDt.toUtc(),
         endAt: endDt.toUtc(),
         pay: Money(amount: _payCentavos),
         category: _category,
+        workersNeeded: _workersNeeded.clamp(1, 999),
+        isUrgent: _urgent,
       );
       if (!mounted) return;
       await widget.onCreated();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Job posted')),
-        );
-      }
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = '$e');

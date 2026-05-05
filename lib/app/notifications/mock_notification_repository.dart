@@ -2,20 +2,23 @@ import 'dart:convert';
 
 import '../../domain/models.dart';
 import '../storage/kv_store.dart';
+import 'notification_repository.dart';
 
-class MockNotificationRepository {
+class MockNotificationRepository implements NotificationRepository {
   MockNotificationRepository(this._store);
 
   final KvStore _store;
 
   static const _kNotifications = 'agapshift.notifications.items';
 
+  @override
   Future<List<AppNotification>> listForUser(String userId) async {
     final all = await _loadAll();
     return all.where((n) => n.userId == userId).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
+  @override
   Future<void> add({
     required String userId,
     required String title,
@@ -36,6 +39,7 @@ class MockNotificationRepository {
     await _saveAll([n, ...all]);
   }
 
+  @override
   Future<void> markRead({required String notificationId}) async {
     final all = await _loadAll();
     final updated = all.map((n) {

@@ -8,6 +8,7 @@ import '../../../../domain/business_identity.dart';
 import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
 import '../../../marketplace/marketplace_repository.dart';
+import '../../../payments/payments_repository.dart';
 import '../../../ratings/mock_ratings_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
@@ -22,21 +23,27 @@ class BusinessProfileScreen extends StatefulWidget {
     required this.session,
     required this.marketRepo,
     required this.ratings,
+    this.payments,
     this.embedded = false,
 
     /// Public business view (e.g. worker opened your listing). Hide on your own Profile tab.
     this.showFollowFab = true,
     this.onLogout,
     this.onOpenNotifications,
+    this.onOpenInbox,
+    this.notificationUnreadCount = 0,
   });
 
   final SessionController session;
   final MarketplaceRepository marketRepo;
   final MockRatingsRepository ratings;
+  final PaymentsRepository? payments;
   final bool embedded;
   final bool showFollowFab;
   final Future<void> Function()? onLogout;
   final VoidCallback? onOpenNotifications;
+  final VoidCallback? onOpenInbox;
+  final int notificationUnreadCount;
 
   @override
   State<BusinessProfileScreen> createState() => _BusinessProfileScreenState();
@@ -47,6 +54,9 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
   List<Gig> _recentGigs = const [];
   List<Rating> _reviews = const [];
   BusinessIdentityDisplay? _identity;
+  int _totalHired = 0;
+  int _totalPaidCentavos = 0;
+  List<_RecentHireVm> _recentHires = const [];
 
   @override
   void initState() {
@@ -67,6 +77,46 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
     final posted = gigs.where((g) => g.businessId == userId).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
     final reviews = await widget.ratings.listForUser(userId);
+    final apps = await widget.marketRepo.listApplications();
+    final myGigIds = posted.map((g) => g.id).toSet();
+    final gigById = {for (final g in posted) g.id: g};
+
+    final hiredApps = apps
+        .where(
+          (a) =>
+              myGigIds.contains(a.gigId) &&
+              a.status == ApplicationStatus.hired,
+        )
+        .toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    var paidCentavos = 0;
+    if (widget.payments != null) {
+      final ledger = await widget.payments!.listLedger(userId);
+      for (final t in ledger) {
+        if (t.type == TransactionType.escrowFunding) {
+          paidCentavos += t.amount.amount;
+        }
+      }
+    }
+
+    final recentHires = <_RecentHireVm>[];
+    for (final a in hiredApps.take(5)) {
+      final g = gigById[a.gigId];
+      final wAvg = await widget.ratings.averageForUser(a.workerId);
+      final stars = wAvg > 0 ? wAvg.round().clamp(1, 5) : 0;
+      final payPesos = g == null ? 0 : (g.pay.amount / 100).round();
+      recentHires.add(
+        _RecentHireVm(
+          workerId: a.workerId,
+          name: _workerLabel(a.workerId),
+          role: g?.title ?? 'Shift',
+          when: _relativeWhen(a.createdAt.toLocal()),
+          amount: '₱${_formatThousandsInt(payPesos)}',
+          stars: stars,
+        ),
+      );
+    }
 
     BusinessIdentityDisplay? identity;
     if (SupabaseConfig.isConfigured) {
@@ -93,7 +143,35 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
       _recentGigs = posted.take(2).toList();
       _reviews = reviews.take(3).toList();
       _identity = identity;
+      _totalHired = hiredApps.length;
+      _totalPaidCentavos = paidCentavos;
+      _recentHires = recentHires;
     });
+  }
+
+  String _workerLabel(String id) {
+    final t = id.trim();
+    if (t.length <= 12) return 'Worker $t';
+    return 'Worker …${t.substring(t.length - 6)}';
+  }
+
+  String _relativeWhen(DateTime local) {
+    final now = DateTime.now();
+    final day = DateTime(local.year, local.month, local.day);
+    final today = DateTime(now.year, now.month, now.day);
+    if (day == today) return 'Today';
+    if (day == today.subtract(const Duration(days: 1))) {
+      return 'Yesterday';
+    }
+    return '${local.month}/${local.day}';
+  }
+
+  String _paidCompact(int centavos) {
+    final p = centavos / 100.0;
+    if (p <= 0) return '₱0';
+    if (p >= 1000000) return '₱${(p / 1000000).toStringAsFixed(1)}M';
+    if (p >= 1000) return '₱${(p / 1000).toStringAsFixed(1)}k';
+    return '₱${p.round()}';
   }
 
   String get _bizName =>
@@ -144,9 +222,16 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
                     phone: _effectiveIdentity?.phone,
                     ratingShow: ratingShow,
                     verified: verified,
+                    workersHired: _totalHired,
+                    totalPaidLabel: widget.payments == null
+                        ? '—'
+                        : _paidCompact(_totalPaidCentavos),
+                    recentHires: _recentHires,
                     session: widget.session,
                     onLogout: widget.onLogout,
                     onOpenNotifications: widget.onOpenNotifications,
+                    onOpenInbox: widget.onOpenInbox,
+                    notificationUnreadCount: widget.notificationUnreadCount,
                   ),
                 ] else ...[
                   if (!widget.showFollowFab) ...[
@@ -354,6 +439,47 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
 const _demoReviewBody =
     'Outstanding partner — clear instructions, safe warehouse, and fair pay. Highly recommend for gig workers.';
 
+class _RecentHireVm {
+  const _RecentHireVm({
+    required this.workerId,
+    required this.name,
+    required this.role,
+    required this.when,
+    required this.amount,
+    required this.stars,
+  });
+
+  final String workerId;
+  final String name;
+  final String role;
+  final String when;
+  final String amount;
+  final int stars;
+}
+
+String _formatThousandsInt(int n) {
+  final s = n.toString();
+  final buf = StringBuffer();
+  for (var i = 0; i < s.length; i++) {
+    final fromEnd = s.length - i;
+    if (i > 0 && fromEnd % 3 == 0) buf.write(',');
+    buf.write(s[i]);
+  }
+  return buf.toString();
+}
+
+String _initialsFromPersonName(String name) {
+  final parts =
+      name.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
+  if (parts.length >= 2) {
+    return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
+  }
+  if (parts.isNotEmpty && parts[0].length >= 2) {
+    return parts[0].substring(0, 2).toUpperCase();
+  }
+  return name.isNotEmpty ? name[0].toUpperCase() : '?';
+}
+
 class _BusinessProfileOwnerTab extends StatelessWidget {
   const _BusinessProfileOwnerTab({
     required this.bizName,
@@ -362,9 +488,14 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
     this.phone,
     required this.ratingShow,
     required this.verified,
+    required this.workersHired,
+    required this.totalPaidLabel,
+    required this.recentHires,
     required this.session,
     required this.onLogout,
     this.onOpenNotifications,
+    this.onOpenInbox,
+    this.notificationUnreadCount = 0,
   });
 
   final String bizName;
@@ -373,9 +504,14 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
   final String? phone;
   final double ratingShow;
   final bool verified;
+  final int workersHired;
+  final String totalPaidLabel;
+  final List<_RecentHireVm> recentHires;
   final SessionController session;
   final Future<void> Function()? onLogout;
   final VoidCallback? onOpenNotifications;
+  final VoidCallback? onOpenInbox;
+  final int notificationUnreadCount;
 
   static final _headerGradient = LinearGradient(
     colors: [
@@ -404,11 +540,14 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Tall enough that the profile card + verified footer never paint under the stats strip.
+    final headerStackHeight = verified ? 332.0 : 252.0;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         SizedBox(
-          height: 198,
+          height: headerStackHeight,
           child: Stack(
             clipBehavior: Clip.none,
             children: [
@@ -434,6 +573,24 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
                             ),
                           ),
                         ),
+                        if (onOpenInbox != null)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: Material(
+                              color: Colors.white.withValues(alpha: 0.2),
+                              shape: const CircleBorder(),
+                              clipBehavior: Clip.antiAlias,
+                              child: IconButton(
+                                icon: const Icon(
+                                  Icons.chat_bubble_outline_rounded,
+                                  color: Colors.white,
+                                  size: 22,
+                                ),
+                                onPressed: onOpenInbox,
+                                tooltip: 'Messages',
+                              ),
+                            ),
+                          ),
                         if (onOpenNotifications != null)
                           Padding(
                             padding: const EdgeInsets.only(right: 4),
@@ -443,8 +600,11 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
                               clipBehavior: Clip.antiAlias,
                               child: IconButton(
                                 icon: Badge(
+                                  isLabelVisible: notificationUnreadCount > 0,
                                   label: Text(
-                                    '2',
+                                    notificationUnreadCount > 99
+                                        ? '99+'
+                                        : '$notificationUnreadCount',
                                     style: GoogleFonts.inter(
                                       fontSize: 10,
                                       fontWeight: FontWeight.w800,
@@ -743,7 +903,11 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
           VerificationStatusCard(session: session),
           const SizedBox(height: 16),
         ],
-        _UnifiedStatsStrip(ratingShow: ratingShow),
+        _UnifiedStatsStrip(
+          workersHired: workersHired,
+          ratingLabel: ratingShow > 0 ? ratingShow.toStringAsFixed(1) : '—',
+          totalPaidLabel: totalPaidLabel,
+        ),
         const SizedBox(height: 20),
         Text(
           'Recent Hires',
@@ -760,39 +924,34 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
             borderRadius: BorderRadius.circular(14),
             border: Border.all(color: AgapColors.borderSubtle),
           ),
-          child: Column(
-            children: const [
-              _RecentHireRow(
-                initials: 'JD',
-                name: 'Juan dela Cruz',
-                role: 'Warehouse Picker',
-                when: 'Today',
-                amount: '₱850',
-                stars: 5,
-                dense: true,
-              ),
-              Divider(height: 1),
-              _RecentHireRow(
-                initials: 'MS',
-                name: 'Maria Santos',
-                role: 'Service Crew',
-                when: 'Yesterday',
-                amount: '₱750',
-                stars: 5,
-                dense: true,
-              ),
-              Divider(height: 1),
-              _RecentHireRow(
-                initials: 'AR',
-                name: 'Ana Reyes',
-                role: 'Retail Staff',
-                when: 'Apr 27',
-                amount: '₱800',
-                stars: 4,
-                dense: true,
-              ),
-            ],
-          ),
+          child: recentHires.isEmpty
+              ? Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Text(
+                    'No hires recorded yet. Hire applicants from your job posts.',
+                    style: GoogleFonts.inter(
+                      color: AgapColors.textMuted,
+                      fontWeight: FontWeight.w600,
+                      height: 1.4,
+                    ),
+                  ),
+                )
+              : Column(
+                  children: [
+                    for (var i = 0; i < recentHires.length; i++) ...[
+                      if (i > 0) const Divider(height: 1),
+                      _RecentHireRow(
+                        initials: _initialsFromPersonName(recentHires[i].name),
+                        name: recentHires[i].name,
+                        role: recentHires[i].role,
+                        when: recentHires[i].when,
+                        amount: recentHires[i].amount,
+                        stars: recentHires[i].stars,
+                        dense: true,
+                      ),
+                    ],
+                  ],
+                ),
         ),
         const SizedBox(height: 20),
         Text(
@@ -875,9 +1034,15 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
 
 /// Single bordered row instead of three separate stat cards.
 class _UnifiedStatsStrip extends StatelessWidget {
-  const _UnifiedStatsStrip({required this.ratingShow});
+  const _UnifiedStatsStrip({
+    required this.workersHired,
+    required this.ratingLabel,
+    required this.totalPaidLabel,
+  });
 
-  final double ratingShow;
+  final int workersHired;
+  final String ratingLabel;
+  final String totalPaidLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -894,7 +1059,7 @@ class _UnifiedStatsStrip extends StatelessWidget {
             child: _StatCell(
               icon: Icons.groups_outlined,
               iconColor: const Color(0xFF6D28D9),
-              value: '124',
+              value: '$workersHired',
               valueColor: AgapColors.businessGreen,
               label: 'Workers hired',
             ),
@@ -904,7 +1069,7 @@ class _UnifiedStatsStrip extends StatelessWidget {
             child: _StatCell(
               icon: Icons.star_rounded,
               iconColor: const Color(0xFFEAB308),
-              value: ratingShow.toStringAsFixed(1),
+              value: ratingLabel,
               valueColor: const Color(0xFFEAB308),
               label: 'Rating',
             ),
@@ -914,7 +1079,7 @@ class _UnifiedStatsStrip extends StatelessWidget {
             child: _StatCell(
               icon: Icons.payments_outlined,
               iconColor: AgapColors.textMuted,
-              value: '₱48k',
+              value: totalPaidLabel,
               valueColor: const Color(0xFF111827),
               label: 'Total paid',
             ),

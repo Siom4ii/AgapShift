@@ -3,15 +3,18 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
 import '../../../marketplace/marketplace_repository.dart';
 import '../../../marketplace/marketplace_scope.dart';
-import '../../../payments/mock_payments_repository.dart';
+import '../../../payments/payments_repository.dart';
+import '../../../location/user_geo_point.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
-import '../../../shift/mock_shift_repository.dart';
+import '../../../location/davao_del_sur_scope.dart';
+import '../../../shift/shift_repository.dart';
 import '../../theme/agap_colors.dart';
 import '../../widgets/shell_screen_polish.dart';
 import '../ratings/rate_user_screen.dart';
@@ -27,8 +30,8 @@ class WorkerShiftScreen extends StatefulWidget {
   });
 
   final MarketplaceRepository marketRepo;
-  final MockShiftRepository shiftRepo;
-  final MockPaymentsRepository payments;
+  final ShiftRepository shiftRepo;
+  final PaymentsRepository payments;
   final SessionController session;
   final bool showAppBar;
 
@@ -40,9 +43,16 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
   bool _loading = false;
   String? _error;
   Gig? _gig;
+  /// True when this gig is only an application — worker is not hired yet (no QR).
+  bool _isAwaitingHire = false;
   List<AttendanceRecord> _attendance = const [];
+  GeoPoint _distanceAnchor = DavaoDelSurScope.defaultCenter;
+  /// Cached worker attendance QR (regenerated periodically so it stays valid).
+  String _attendanceQrPayload = '';
+  String? _ratingPromptedForGigId;
 
   Timer? _timer;
+  Timer? _qrRegenTimer;
   DateTime _now = DateTime.now();
 
   @override
@@ -53,12 +63,44 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
       if (!mounted) return;
       setState(() => _now = DateTime.now());
     });
+    _qrRegenTimer = Timer.periodic(const Duration(minutes: 8), (_) {
+      if (!mounted) return;
+      _regenAttendanceQrIfNeeded();
+    });
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _qrRegenTimer?.cancel();
     super.dispose();
+  }
+
+  void _regenAttendanceQrIfNeeded() {
+    final gig = _gig;
+    final workerId = appActorId(widget.session, mockFallback: '');
+    if (gig == null || workerId.isEmpty || _isAwaitingHire) return;
+
+    final checkIn = _checkInAt;
+    final checkOut = _checkOutAt;
+    final canCheckIn = checkIn == null;
+    final canCheckOut = checkIn != null && checkOut == null;
+    if (!canCheckIn && !canCheckOut) {
+      if (_attendanceQrPayload.isNotEmpty) {
+        setState(() => _attendanceQrPayload = '');
+      }
+      return;
+    }
+
+    final type =
+        canCheckOut ? AttendanceScanType.checkOut : AttendanceScanType.checkIn;
+    setState(() {
+      _attendanceQrPayload = widget.shiftRepo.createWorkerAttendanceQr(
+        gigId: gig.id,
+        workerId: workerId,
+        type: type,
+      );
+    });
   }
 
   Future<void> _load() async {
@@ -67,34 +109,75 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
       _error = null;
     });
     try {
+      final userPt = await tryGetCurrentUserGeoPoint();
       final workerId = appActorId(widget.session, mockFallback: '');
       final gigs = await widget.marketRepo.listGigs();
+      final gigById = {for (final g in gigs) g.id: g};
       Gig? selected;
+      var awaitingHire = false;
 
       if (workerId.isNotEmpty) {
-        // Find the most relevant gig hired to this worker.
-        final candidates = <Gig>[];
-        for (final g in gigs) {
-          final hired = await widget.marketRepo.getHiredWorkerId(g.id);
-          if (hired == workerId) candidates.add(g);
+        final apps = await widget.marketRepo.listApplications();
+
+        final hiredGigIds = apps
+            .where(
+              (a) =>
+                  a.workerId == workerId &&
+                  a.status == ApplicationStatus.hired,
+            )
+            .map((a) => a.gigId)
+            .toSet();
+        final hiredGigs = <Gig>[];
+        for (final gid in hiredGigIds) {
+          final g = gigById[gid] ?? await widget.marketRepo.getGig(gid);
+          if (g == null) continue;
+          if (g.status == GigStatus.cancelled) continue;
+          hiredGigs.add(g);
         }
-        candidates.sort((a, b) => a.startAt.compareTo(b.startAt));
-        selected = candidates.isEmpty ? null : candidates.first;
+        hiredGigs.sort((a, b) => a.startAt.compareTo(b.startAt));
+
+        if (hiredGigs.isNotEmpty) {
+          selected = hiredGigs.first;
+          awaitingHire = false;
+        } else {
+          final pendingGigs = <Gig>[];
+          for (final a in apps) {
+            if (a.workerId != workerId ||
+                a.status != ApplicationStatus.applied) {
+              continue;
+            }
+            final g = gigById[a.gigId] ?? await widget.marketRepo.getGig(a.gigId);
+            if (g == null) continue;
+            if (g.status == GigStatus.cancelled) continue;
+            if (g.status == GigStatus.completed) continue;
+            if (g.status == GigStatus.filled ||
+                g.status == GigStatus.ongoing) {
+              final hw = await widget.marketRepo.getHiredWorkerId(g.id);
+              if (hw != null && hw != workerId) continue;
+            }
+            pendingGigs.add(g);
+          }
+          pendingGigs.sort((a, b) => a.startAt.compareTo(b.startAt));
+          if (pendingGigs.isNotEmpty) {
+            selected = pendingGigs.first;
+            awaitingHire = true;
+          }
+        }
       }
 
-      // Demo fallback if there is no hired gig.
-      selected ??= gigs.isEmpty
-          ? null
-          : (gigs..sort((a, b) => a.startAt.compareTo(b.startAt))).first;
-
-      final attendance = selected == null
+      final attendance = selected == null || awaitingHire
           ? <AttendanceRecord>[]
           : await widget.shiftRepo.listAttendanceForGig(selected.id);
       if (!mounted) return;
       setState(() {
+        _distanceAnchor = userPt ?? DavaoDelSurScope.defaultCenter;
         _gig = selected;
+        _isAwaitingHire = awaitingHire;
         _attendance = attendance;
       });
+      _regenAttendanceQrIfNeeded();
+      await _tryReleaseEscrowIfCheckedOut();
+      await _maybePromptRatingAfterCheckout();
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = '$e');
@@ -128,73 +211,53 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
     return a.first.scannedAt.toLocal();
   }
 
-  Future<void> _scan(AttendanceScanType type) async {
-    final token = await _promptToken(context);
-    if (token == null || token.trim().isEmpty) return;
-
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
+  Future<void> _tryReleaseEscrowIfCheckedOut() async {
+    final gig = _gig;
+    final workerId = appActorId(widget.session, mockFallback: '');
+    if (gig == null || workerId.isEmpty || _checkOutAt == null) return;
     try {
-      final workerId = appActorId(widget.session, mockFallback: 'worker');
-      // In our mock, gig stores businessId; reuse that as the validator.
-      final gig = _gig;
-      if (gig == null) throw StateError('No active shift yet');
-      await widget.shiftRepo.scanQr(
-        qrToken: token.trim(),
-        gigId: gig.id,
-        workerId: workerId,
-        businessId: gig.businessId,
-        type: type,
-      );
-
-      if (type == AttendanceScanType.checkOut) {
-        final hiredWorker = await widget.marketRepo.getHiredWorkerId(gig.id);
-        if (hiredWorker == workerId) {
-          final funded = await widget.payments.isEscrowFunded(gig.id);
-          if (funded) {
-            await widget.payments.releaseEscrowToWorker(
-              gigId: gig.id,
-              workerId: workerId,
-            );
-          }
-        }
-
-        // Prompt worker to rate the business after successful checkout.
-        final gigAfter = await widget.marketRepo.getGig(gig.id);
-        if (gigAfter != null) {
-          if (!mounted) return;
-          final nav = Navigator.of(context);
-          final ratings = MarketplaceScope.of(context).ratings;
-          final existing = await ratings.getForShift(
-            gigId: gig.id,
-            raterUserId: workerId,
-            ratedUserId: gigAfter.businessId,
-          );
-          if (!mounted) return;
-          if (existing == null) {
-            await nav.push(
-              MaterialPageRoute(
-                builder: (_) => RateUserScreen(
-                  ratings: ratings,
-                  gigId: gig.id,
-                  raterUserId: workerId,
-                  ratedUserId: gigAfter.businessId,
-                  title: 'Rate the business for "${gigAfter.title}"',
-                ),
-              ),
-            );
-          }
-        }
+      final hired = await widget.marketRepo.getHiredWorkerId(gig.id);
+      if (hired != workerId) return;
+      final funded = await widget.payments.isEscrowFunded(gig.id);
+      if (funded) {
+        await widget.payments.releaseEscrowToWorker(
+          gigId: gig.id,
+          workerId: workerId,
+        );
       }
-      final refreshed = await widget.shiftRepo.listAttendanceForGig(gig.id);
-      if (mounted) setState(() => _attendance = refreshed);
-    } catch (e) {
-      setState(() => _error = '$e');
-    } finally {
-      if (mounted) setState(() => _loading = false);
+    } catch (_) {}
+  }
+
+  Future<void> _maybePromptRatingAfterCheckout() async {
+    final gig = _gig;
+    final workerId = appActorId(widget.session, mockFallback: '');
+    if (gig == null ||
+        workerId.isEmpty ||
+        _checkOutAt == null ||
+        _ratingPromptedForGigId == gig.id) {
+      return;
     }
+    _ratingPromptedForGigId = gig.id;
+    final gigAfter = await widget.marketRepo.getGig(gig.id);
+    if (gigAfter == null || !mounted) return;
+    final ratings = MarketplaceScope.of(context).ratings;
+    final existing = await ratings.getForShift(
+      gigId: gig.id,
+      raterUserId: workerId,
+      ratedUserId: gigAfter.businessId,
+    );
+    if (!mounted || existing != null) return;
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => RateUserScreen(
+          ratings: ratings,
+          gigId: gig.id,
+          raterUserId: workerId,
+          ratedUserId: gigAfter.businessId,
+          title: 'Rate the business for "${gigAfter.title}"',
+        ),
+      ),
+    );
   }
 
   @override
@@ -202,25 +265,31 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
     final gig = _gig;
     final checkIn = _checkInAt;
     final checkOut = _checkOutAt;
-    final status = checkOut != null
-        ? 'Completed'
-        : checkIn != null
-        ? 'In progress'
-        : 'Upcoming';
+    final status = gig == null
+        ? 'No shift assigned'
+        : _isAwaitingHire
+            ? 'Application pending'
+            : checkOut != null
+                ? 'Completed'
+                : checkIn != null
+                    ? 'In progress'
+                    : 'Upcoming';
 
     final payPhp = gig == null ? 0 : (gig.pay.amount / 100.0).round();
     final distanceKm = gig == null
         ? 0.0
         : _distanceKm(
-            const GeoPoint(lat: 14.5995, lng: 120.9842),
+            _distanceAnchor,
             gig.location,
           );
 
-    final canCheckIn = gig != null && checkIn == null;
-    final canCheckOut = gig != null && checkIn != null && checkOut == null;
-    final action = canCheckOut
-        ? AttendanceScanType.checkOut
-        : AttendanceScanType.checkIn;
+    final canCheckIn =
+        gig != null && !_isAwaitingHire && checkIn == null;
+    final canCheckOut =
+        gig != null && !_isAwaitingHire && checkIn != null && checkOut == null;
+    final showAttendanceQr =
+        gig != null && !_isAwaitingHire && (canCheckIn || canCheckOut);
+    final qrIsCheckOut = canCheckOut;
 
     final body = SafeArea(
       child: ShellChromeBackground(
@@ -276,11 +345,13 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
                               width: 8,
                               height: 8,
                               decoration: BoxDecoration(
-                                color: status == 'Upcoming'
-                                    ? const Color(0xFFF59E0B)
-                                    : status == 'In progress'
-                                    ? const Color(0xFF22C55E)
-                                    : const Color(0xFF6B7280),
+                                color: gig == null
+                                    ? const Color(0xFF9CA3AF)
+                                    : _isAwaitingHire || status == 'Upcoming'
+                                        ? const Color(0xFFF59E0B)
+                                        : status == 'In progress'
+                                            ? const Color(0xFF22C55E)
+                                            : const Color(0xFF6B7280),
                                 shape: BoxShape.circle,
                               ),
                             ),
@@ -321,6 +392,7 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
                   payPhp: payPhp,
                   checkIn: checkIn,
                   checkOut: checkOut,
+                  applicationPending: _isAwaitingHire,
                 ),
               const SizedBox(height: 14),
               if (gig != null)
@@ -328,16 +400,27 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
                   address: gig.addressLabel,
                   distanceKm: distanceKm,
                 ),
-              const SizedBox(height: 14),
-              _ScanButton(
-                enabled: !_loading && (canCheckIn || canCheckOut),
-                label: canCheckOut
-                    ? 'Scan QR — Check Out'
-                    : 'Scan QR — Check In',
-                onTap: () => _scan(action),
-              ),
-              const SizedBox(height: 12),
-              _SecurityNote(),
+              if (gig != null) ...[
+                const SizedBox(height: 14),
+                if (_isAwaitingHire)
+                  _AwaitingHireNote()
+                else if (showAttendanceQr && _attendanceQrPayload.isNotEmpty) ...[
+                  _WorkerAttendanceQrCard(
+                    title: qrIsCheckOut
+                        ? 'Check-out — show employer'
+                        : 'Check-in — show employer',
+                    subtitle: qrIsCheckOut
+                        ? 'Your employer scans this to end your shift.'
+                        : 'Your employer scans this to start your shift.',
+                    payload: _attendanceQrPayload,
+                    onRefresh: () {
+                      setState(_regenAttendanceQrIfNeeded);
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  _SecurityNote(),
+                ],
+              ],
               const SizedBox(height: 8),
             ],
           ),
@@ -358,6 +441,7 @@ class _ShiftSummaryCard extends StatelessWidget {
     required this.payPhp,
     required this.checkIn,
     required this.checkOut,
+    this.applicationPending = false,
   });
 
   final String title;
@@ -365,6 +449,7 @@ class _ShiftSummaryCard extends StatelessWidget {
   final int payPhp;
   final DateTime? checkIn;
   final DateTime? checkOut;
+  final bool applicationPending;
 
   @override
   Widget build(BuildContext context) {
@@ -404,7 +489,7 @@ class _ShiftSummaryCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Today\'s Shift',
+                      applicationPending ? 'Applied gig' : 'Today\'s Shift',
                       style: GoogleFonts.inter(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
@@ -457,25 +542,45 @@ class _ShiftSummaryCard extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: _MiniStat(
-                  icon: Icons.schedule_rounded,
-                  label: 'Check-in',
-                  value: t(checkIn),
+          if (applicationPending)
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.16),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: Colors.white.withValues(alpha: 0.14)),
+              ),
+              child: Text(
+                'Check-in & check-out unlock after the business hires you.',
+                style: GoogleFonts.inter(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w700,
+                  height: 1.35,
+                  color: Colors.white,
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _MiniStat(
-                  icon: Icons.schedule_rounded,
-                  label: 'Check-out',
-                  value: t(checkOut),
+            )
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: _MiniStat(
+                    icon: Icons.schedule_rounded,
+                    label: 'Check-in',
+                    value: t(checkIn),
+                  ),
                 ),
-              ),
-            ],
-          ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _MiniStat(
+                    icon: Icons.schedule_rounded,
+                    label: 'Check-out',
+                    value: t(checkOut),
+                  ),
+                ),
+              ],
+            ),
         ],
       ),
     );
@@ -607,35 +712,111 @@ class _LocationCard extends StatelessWidget {
   }
 }
 
-class _ScanButton extends StatelessWidget {
-  const _ScanButton({
-    required this.enabled,
-    required this.label,
-    required this.onTap,
+class _WorkerAttendanceQrCard extends StatelessWidget {
+  const _WorkerAttendanceQrCard({
+    required this.title,
+    required this.subtitle,
+    required this.payload,
+    required this.onRefresh,
   });
-  final bool enabled;
-  final String label;
-  final VoidCallback onTap;
+
+  final String title;
+  final String subtitle;
+  final String payload;
+  final VoidCallback onRefresh;
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      height: 52,
-      child: FilledButton.icon(
-        style: FilledButton.styleFrom(
-          backgroundColor: enabled
-              ? const Color(0xFF6D28D9)
-              : AgapColors.textMuted.withValues(alpha: 0.35),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(14),
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AgapColors.borderSubtle.withValues(alpha: 0.9),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
           ),
-        ),
-        onPressed: enabled ? onTap : null,
-        icon: const Icon(Icons.qr_code_2_rounded),
-        label: Text(
-          label,
-          style: GoogleFonts.inter(fontWeight: FontWeight.w800),
-        ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: GoogleFonts.inter(
+              fontSize: 16,
+              fontWeight: FontWeight.w900,
+              color: const Color(0xFF111827),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            subtitle,
+            style: GoogleFonts.inter(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AgapColors.textMuted,
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Center(
+            child: QrImageView(
+              data: payload,
+              size: 220,
+              backgroundColor: Colors.white,
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: onRefresh,
+              icon: const Icon(Icons.refresh_rounded, size: 20),
+              label: Text(
+                'New code',
+                style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AwaitingHireNote extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF6FF),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFBFDBFE)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.hourglass_top_rounded, color: Color(0xFF1D4ED8)),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'You\'ve applied for this gig. Check-in opens after the business hires you.',
+              style: GoogleFonts.inter(
+                fontSize: 12.5,
+                height: 1.35,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF1E40AF),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -658,7 +839,7 @@ class _SecurityNote extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'QR-based check-in/out prevents time fraud and ensures accurate payment processing.',
+              'Your employer scans your code to clock you in and out. Refresh if the code expires.',
               style: GoogleFonts.inter(
                 fontSize: 12.5,
                 height: 1.35,
@@ -781,29 +962,4 @@ String _companyFromBusinessId(String id) {
       .map((w) => '${w[0].toUpperCase()}${w.length > 1 ? w.substring(1) : ''}')
       .join(' ');
   return '$titled Logistics';
-}
-
-Future<String?> _promptToken(BuildContext context) async {
-  final controller = TextEditingController();
-  return showDialog<String>(
-    context: context,
-    builder: (context) => AlertDialog(
-      title: const Text('Enter QR token'),
-      content: TextField(
-        controller: controller,
-        maxLines: 3,
-        decoration: const InputDecoration(hintText: 'Paste token here'),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(context, controller.text),
-          child: const Text('Submit'),
-        ),
-      ],
-    ),
-  );
 }

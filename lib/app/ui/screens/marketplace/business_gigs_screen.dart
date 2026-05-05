@@ -1,15 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
 
 import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
-import '../../../notifications/mock_notification_repository.dart';
+import '../../../notifications/notification_repository.dart';
 import '../../../marketplace/marketplace_repository.dart';
-import '../../../payments/mock_payments_repository.dart';
+import '../../../payments/payments_repository.dart';
+import '../../../ratings/mock_ratings_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
-import '../../../shift/mock_shift_repository.dart';
+import '../../../shift/shift_repository.dart';
+import '../../theme/agap_colors.dart';
 import 'business_gig_applicants_screen.dart';
-import '../shift/business_qr_screen.dart';
+import '../../widgets/success_feedback.dart';
 
 class BusinessGigsScreen extends StatefulWidget {
   const BusinessGigsScreen({
@@ -17,17 +20,22 @@ class BusinessGigsScreen extends StatefulWidget {
     required this.repo,
     required this.notifications,
     required this.payments,
-    required this.shiftRepo,
+    required this.ratings,
     required this.session,
+    required this.shiftRepo,
     this.embedded = false,
+    this.suppressEmbeddedHeader = false,
   });
 
   final MarketplaceRepository repo;
-  final MockNotificationRepository notifications;
-  final MockPaymentsRepository payments;
-  final MockShiftRepository shiftRepo;
+  final NotificationRepository notifications;
+  final PaymentsRepository payments;
+  final MockRatingsRepository ratings;
   final SessionController session;
+  final ShiftRepository shiftRepo;
   final bool embedded;
+  /// When [embedded] is true, omit the inner "My job posts" title row (e.g. nested under Workers tabs).
+  final bool suppressEmbeddedHeader;
 
   @override
   State<BusinessGigsScreen> createState() => _BusinessGigsScreenState();
@@ -36,6 +44,7 @@ class BusinessGigsScreen extends StatefulWidget {
 class _BusinessGigsScreenState extends State<BusinessGigsScreen> {
   bool _loading = false;
   List<Gig> _items = const [];
+  List<GigApplication> _applications = const [];
   String? _error;
 
   @override
@@ -52,17 +61,72 @@ class _BusinessGigsScreenState extends State<BusinessGigsScreen> {
     try {
       final businessId = appActorId(widget.session, mockFallback: 'business');
       final all = await widget.repo.listGigs();
+      final apps = await widget.repo.listApplications();
       final items = all.where((g) => g.businessId == businessId).toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
       if (!mounted) return;
-      setState(() => _items = items);
+      setState(() {
+        _items = items;
+        _applications = apps;
+      });
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = '$e');
     } finally {
-      if (!mounted) return;
-      setState(() => _loading = false);
+      if (mounted) {
+        setState(() => _loading = false);
+      }
     }
+  }
+
+  Future<void> _confirmCancel(Gig gig) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Text(
+          'Cancel this listing?',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 18),
+        ),
+        content: Text(
+          '“${gig.title}” will be marked as Cancelled and stay in this list. Workers will no longer see it as an open job.',
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            height: 1.45,
+            color: AgapColors.textMuted,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text(
+              'Keep listing',
+              style: GoogleFonts.inter(
+                fontWeight: FontWeight.w700,
+                color: AgapColors.textMuted,
+              ),
+            ),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFDC2626),
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: Text(
+              'Cancel listing',
+              style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (ok == true) await _cancel(gig);
   }
 
   Future<void> _cancel(Gig gig) async {
@@ -76,94 +140,116 @@ class _BusinessGigsScreenState extends State<BusinessGigsScreen> {
         data: {'gigId': gig.id},
       );
       await _load();
+      if (!mounted) return;
+      showSuccessSnackBar(context, 'Job cancelled');
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Cannot cancel: $e')));
     }
   }
 
+  int _applyingCount(String gigId) => _applications
+      .where(
+        (a) =>
+            a.gigId == gigId && a.status == ApplicationStatus.applied,
+      )
+      .length;
+
+  Future<void> _openApplicants(Gig g) async {
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => BusinessGigApplicantsScreen(
+          repo: widget.repo,
+          notifications: widget.notifications,
+          payments: widget.payments,
+          session: widget.session,
+          ratings: widget.ratings,
+          shiftRepo: widget.shiftRepo,
+          gig: g,
+        ),
+      ),
+    );
+    await _load();
+  }
+
   @override
   Widget build(BuildContext context) {
     final list = _loading
-        ? const Center(child: CircularProgressIndicator())
+        ? const Center(
+            child: CircularProgressIndicator(color: AgapColors.businessGreen),
+          )
         : _error != null
-            ? Center(child: Text('Error: $_error'))
+            ? Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Text(
+                    'Error: $_error',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.inter(),
+                  ),
+                ),
+              )
             : _items.isEmpty
-                ? const Center(child: Text('No gigs yet. Tap “Post a Job” on Home to create one.'))
-                : ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
-                    itemCount: _items.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
-                    itemBuilder: (context, i) {
-                      final g = _items[i];
-                      return Card(
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 4),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              ListTile(
-                                contentPadding: const EdgeInsets.symmetric(horizontal: 16),
-                                title: Text(g.title, style: const TextStyle(fontWeight: FontWeight.w700)),
-                                subtitle: Text('${g.category} • ${_statusLabel(g.status)}'),
+                ? CustomScrollView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    slivers: [
+                      SliverFillRemaining(
+                        hasScrollBody: false,
+                        child: Center(
+                          child: Padding(
+                            padding: const EdgeInsets.all(24),
+                            child: Text(
+                              'No job posts yet. Tap “Post Job” in the tab bar to create one.',
+                              textAlign: TextAlign.center,
+                              style: GoogleFonts.inter(
+                                color: AgapColors.textMuted,
+                                fontWeight: FontWeight.w600,
+                                height: 1.4,
                               ),
-                              Padding(
-                                padding: const EdgeInsets.only(left: 8, right: 8, bottom: 8),
-                                child: Wrap(
-                                  spacing: 8,
-                                  children: [
-                                    FilledButton.tonalIcon(
-                                      onPressed: () async {
-                                        await Navigator.of(context).push(
-                                          MaterialPageRoute(
-                                            builder: (_) => BusinessGigApplicantsScreen(
-                                              repo: widget.repo,
-                                              notifications: widget.notifications,
-                                              payments: widget.payments,
-                                              session: widget.session,
-                                              gig: g,
-                                            ),
-                                          ),
-                                        );
-                                        await _load();
-                                      },
-                                      icon: const Icon(Icons.people_alt_outlined),
-                                      label: const Text('Applicants'),
-                                    ),
-                                    if (g.status == GigStatus.filled ||
-                                        g.status == GigStatus.ongoing ||
-                                        g.status == GigStatus.open)
-                                      OutlinedButton.icon(
-                                        onPressed: () async {
-                                          await Navigator.of(context).push(
-                                            MaterialPageRoute(
-                                              builder: (_) => BusinessQrScreen(
-                                                shiftRepo: widget.shiftRepo,
-                                                gig: g,
-                                              ),
-                                            ),
-                                          );
-                                        },
-                                        icon: const Icon(Icons.qr_code_2),
-                                        label: const Text('QR'),
-                                      ),
-                                    if (g.status != GigStatus.cancelled && g.status != GigStatus.completed)
-                                      TextButton.icon(
-                                        onPressed: () => _cancel(g),
-                                        icon: const Icon(Icons.cancel_outlined),
-                                        label: const Text('Cancel'),
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
                         ),
+                      ),
+                    ],
+                  )
+                : ListView.separated(
+                    padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
+                    itemCount: _items.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 16),
+                    itemBuilder: (context, i) {
+                      final g = _items[i];
+                      final applying = _applyingCount(g.id);
+                      final payDay = (g.pay.amount / 100).round();
+                      final canCancel = g.status != GigStatus.cancelled &&
+                          g.status != GigStatus.completed;
+                      final listingInactive =
+                          g.status == GigStatus.cancelled ||
+                          g.status == GigStatus.completed;
+
+                      return _JobPostCard(
+                        gig: g,
+                        payDay: payDay,
+                        applying: applying,
+                        cardIconIndex: i,
+                        showCancelAction: canCancel,
+                        listingInactive: listingInactive,
+                        statusLabel: _statusLabel(g.status),
+                        onReviewApplicants: () => _openApplicants(g),
+                        onCancelListing: () => _confirmCancel(g),
                       );
                     },
                   );
 
     if (widget.embedded) {
+      if (widget.suppressEmbeddedHeader) {
+        return SafeArea(
+          child: RefreshIndicator(
+            color: AgapColors.businessGreen,
+            onRefresh: _load,
+            child: list,
+          ),
+        );
+      }
       return SafeArea(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -174,8 +260,11 @@ class _BusinessGigsScreenState extends State<BusinessGigsScreen> {
                 children: [
                   Expanded(
                     child: Text(
-                      'My gigs',
-                      style: Theme.of(context).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
+                      'My job posts',
+                      style: GoogleFonts.inter(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                   IconButton(
@@ -193,17 +282,33 @@ class _BusinessGigsScreenState extends State<BusinessGigsScreen> {
     }
 
     return Scaffold(
+      backgroundColor: AgapColors.pageBackground,
       appBar: AppBar(
-        title: const Text('My gigs'),
+        title: Text(
+          'My job posts',
+          style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 18),
+        ),
+        backgroundColor: Colors.white,
+        foregroundColor: const Color(0xFF111827),
+        elevation: 0,
+        scrolledUnderElevation: 0.5,
+        shadowColor: Colors.black.withValues(alpha: 0.06),
+        surfaceTintColor: Colors.transparent,
         actions: [
           IconButton(
             tooltip: 'Refresh',
             onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh_rounded),
           ),
         ],
       ),
-      body: SafeArea(child: list),
+      body: SafeArea(
+        child: RefreshIndicator(
+          color: AgapColors.businessGreen,
+          onRefresh: _load,
+          child: list,
+        ),
+      ),
     );
   }
 
@@ -214,5 +319,262 @@ class _BusinessGigsScreenState extends State<BusinessGigsScreen> {
         GigStatus.completed => 'Completed',
         GigStatus.cancelled => 'Cancelled',
       };
+}
+
+class _JobPostCard extends StatelessWidget {
+  const _JobPostCard({
+    required this.gig,
+    required this.payDay,
+    required this.applying,
+    required this.cardIconIndex,
+    required this.showCancelAction,
+    required this.listingInactive,
+    required this.statusLabel,
+    required this.onReviewApplicants,
+    required this.onCancelListing,
+  });
+
+  final Gig gig;
+  final int payDay;
+  final int applying;
+  final int cardIconIndex;
+  final bool showCancelAction;
+  final bool listingInactive;
+  final String statusLabel;
+  final VoidCallback onReviewApplicants;
+  final VoidCallback onCancelListing;
+
+  static const _categoryIcons = [
+    Icons.work_outline_rounded,
+    Icons.restaurant_outlined,
+    Icons.storefront_outlined,
+    Icons.event_outlined,
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    final icon = _categoryIcons[cardIconIndex % _categoryIcons.length];
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: const Color(0xFFE8EAEF),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 18, 18, 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 48,
+                  height: 48,
+                  decoration: BoxDecoration(
+                    color: AgapColors.businessMint,
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                  child: Icon(
+                    icon,
+                    color: AgapColors.businessGreenDeep,
+                    size: 24,
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        gig.title,
+                        style: GoogleFonts.inter(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w800,
+                          height: 1.25,
+                          color: const Color(0xFF111827),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Text(
+                        '${gig.category} · ₱$payDay/day',
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AgapColors.textMuted,
+                          height: 1.3,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _StatusPill(label: statusLabel),
+              ],
+            ),
+            const SizedBox(height: 18),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: FilledButton(
+                    onPressed: onReviewApplicants,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: listingInactive
+                          ? const Color(0xFFE5E7EB)
+                          : AgapColors.businessGreen,
+                      foregroundColor: listingInactive
+                          ? const Color(0xFF374151)
+                          : Colors.white,
+                      elevation: 0,
+                      shadowColor: Colors.transparent,
+                      padding: const EdgeInsets.symmetric(
+                        vertical: 14,
+                        horizontal: 16,
+                      ),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          listingInactive
+                              ? 'View applicants'
+                              : 'Review applicants',
+                          style: GoogleFonts.inter(
+                            fontWeight: FontWeight.w800,
+                            fontSize: 14,
+                          ),
+                        ),
+                        if (applying > 0) ...[
+                          const SizedBox(width: 10),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 9,
+                              vertical: 3,
+                            ),
+                            decoration: BoxDecoration(
+                              color: listingInactive
+                                  ? Colors.black.withValues(alpha: 0.08)
+                                  : Colors.white.withValues(alpha: 0.28),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: Text(
+                              '$applying',
+                              style: GoogleFonts.inter(
+                                fontWeight: FontWeight.w900,
+                                fontSize: 13,
+                                color: listingInactive
+                                    ? const Color(0xFF374151)
+                                    : Colors.white,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                if (showCancelAction) ...[
+                  const SizedBox(width: 10),
+                  Tooltip(
+                    message: 'Cancel listing',
+                    child: Material(
+                      color: const Color(0xFFFFF1F2),
+                      borderRadius: BorderRadius.circular(14),
+                      clipBehavior: Clip.antiAlias,
+                      child: InkWell(
+                        onTap: onCancelListing,
+                        child: SizedBox(
+                          width: 50,
+                          height: 50,
+                          child: Icon(
+                            Icons.delete_outline_rounded,
+                            color: const Color(0xFFB91C1C),
+                            size: 26,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({required this.label});
+
+  final String label;
+
+  Color get _bg {
+    switch (label) {
+      case 'Open':
+        return AgapColors.businessMint;
+      case 'Filled':
+      case 'Ongoing':
+        return const Color(0xFFEFF6FF);
+      case 'Completed':
+        return const Color(0xFFF3F4F6);
+      case 'Cancelled':
+        return const Color(0xFFFEF2F2);
+      default:
+        return AgapColors.businessMint;
+    }
+  }
+
+  Color get _fg {
+    switch (label) {
+      case 'Open':
+        return AgapColors.businessGreenDeep;
+      case 'Filled':
+      case 'Ongoing':
+        return const Color(0xFF1D4ED8);
+      case 'Completed':
+        return AgapColors.textMuted;
+      case 'Cancelled':
+        return const Color(0xFFB91C1C);
+      default:
+        return AgapColors.businessGreenDeep;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: _bg,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: GoogleFonts.inter(
+          fontSize: 11.5,
+          fontWeight: FontWeight.w800,
+          letterSpacing: 0.2,
+          color: _fg,
+        ),
+      ),
+    );
+  }
 }
 

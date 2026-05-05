@@ -6,6 +6,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../marketplace/marketplace_scope.dart';
+import '../../../onboarding/kyc_storage_service.dart';
 import '../../../onboarding/supabase_onboarding_sync.dart';
 import '../../../session/session_models.dart';
 import '../../../supabase/supabase_config.dart';
@@ -65,6 +66,9 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
   // Step 3 — Identity Verification
   String? _govIdFile;
   String? _selfieFile;
+  String? _govIdStoragePath;
+  String? _selfieStoragePath;
+  bool _kycBusy = false;
 
   // Step 4 — Resume & Skills
   static const _availableSkills = [
@@ -158,6 +162,14 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
     _education.dispose();
     _payoutAccount.dispose();
     super.dispose();
+  }
+
+  /// Both password fields have text but differ (for inline validation UI).
+  bool get _passwordsMismatch {
+    final p = _password.text;
+    final c = _confirmPassword.text;
+    if (p.isEmpty || c.isEmpty) return false;
+    return p != c;
   }
 
   bool get _canContinue {
@@ -336,10 +348,20 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
       };
     }
     if (completedStep >= 2) {
-      m['identity'] = {
-        'government_id_file': _govIdFile,
-        'selfie_file': _selfieFile,
-      };
+      final identity = <String, dynamic>{};
+      KycStorageService.putFileRef(
+        identity,
+        'government_id',
+        _govIdFile,
+        _govIdStoragePath,
+      );
+      KycStorageService.putFileRef(
+        identity,
+        'selfie',
+        _selfieFile,
+        _selfieStoragePath,
+      );
+      m['identity'] = identity;
     }
     if (completedStep >= 3) {
       m['resume'] = {
@@ -458,40 +480,117 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
   }
 
   Future<void> _pickGovId() async {
-    final n = await pickKycDocument();
+    final file = await pickKycDocumentFile();
     if (!mounted) return;
-    if (n != null) {
-      setState(() => _govIdFile = n);
+    if (file == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('No file selected.'),
+          action: SnackBarAction(
+            label: 'Use demo',
+            onPressed: () => setState(() {
+              _govIdFile = 'demo_government_id.jpg';
+              _govIdStoragePath = null;
+            }),
+          ),
+        ),
+      );
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('No file selected.'),
-        action: SnackBarAction(
-          label: 'Use demo',
-          onPressed: () =>
-              setState(() => _govIdFile = 'demo_government_id.jpg'),
-        ),
-      ),
-    );
+
+    final label = kycFileLabel(file);
+    if (!SupabaseConfig.isConfigured) {
+      setState(() {
+        _govIdFile = label;
+        _govIdStoragePath = null;
+      });
+      return;
+    }
+
+    setState(() => _kycBusy = true);
+    try {
+      final path = await KycStorageService.upload(
+        file: file,
+        flow: 'worker',
+        documentType: 'government_id',
+      );
+      if (!mounted) return;
+      setState(() {
+        _govIdFile = label;
+        _govIdStoragePath = path;
+      });
+    } on KycUploadTooLargeException catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File must be 10MB or smaller.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not upload ID: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _kycBusy = false);
+    }
   }
 
   Future<void> _captureSelfie() async {
-    final n = await pickKycSelfieImage();
+    final file = await pickKycSelfieImageFile();
     if (!mounted) return;
-    if (n != null) {
-      setState(() => _selfieFile = n);
+    if (file == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('No selfie selected.'),
+          action: SnackBarAction(
+            label: 'Use demo',
+            onPressed: () => setState(() {
+              _selfieFile = 'demo_selfie.jpg';
+              _selfieStoragePath = null;
+            }),
+          ),
+        ),
+      );
       return;
     }
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: const Text('No selfie selected.'),
-        action: SnackBarAction(
-          label: 'Use demo',
-          onPressed: () => setState(() => _selfieFile = 'demo_selfie.jpg'),
-        ),
-      ),
-    );
+
+    final label = kycFileLabel(file);
+    if (!SupabaseConfig.isConfigured) {
+      setState(() {
+        _selfieFile = label;
+        _selfieStoragePath = null;
+      });
+      return;
+    }
+
+    setState(() => _kycBusy = true);
+    try {
+      final path = await KycStorageService.upload(
+        file: file,
+        flow: 'worker',
+        documentType: 'selfie',
+      );
+      if (!mounted) return;
+      setState(() {
+        _selfieFile = label;
+        _selfieStoragePath = path;
+      });
+    } on KycUploadTooLargeException catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('File must be 10MB or smaller.')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not upload selfie: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _kycBusy = false);
+    }
   }
 
   void _addCustomSkill() {
@@ -663,6 +762,7 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
           email: _email,
           password: _password,
           confirmPassword: _confirmPassword,
+          passwordsMismatch: _passwordsMismatch,
           passwordVisible: _passwordVisible,
           confirmPasswordVisible: _confirmPasswordVisible,
           onTogglePassword: () =>
@@ -690,6 +790,7 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
         return _IdentityStep(
           govIdFile: _govIdFile,
           selfieFile: _selfieFile,
+          kycBusy: _kycBusy,
           onPickGovId: _pickGovId,
           onCaptureSelfie: _captureSelfie,
         );
@@ -856,6 +957,7 @@ class _CreateAccountStep extends StatelessWidget {
     required this.email,
     required this.password,
     required this.confirmPassword,
+    required this.passwordsMismatch,
     required this.passwordVisible,
     required this.confirmPasswordVisible,
     required this.onTogglePassword,
@@ -866,6 +968,7 @@ class _CreateAccountStep extends StatelessWidget {
   final TextEditingController email;
   final TextEditingController password;
   final TextEditingController confirmPassword;
+  final bool passwordsMismatch;
   final bool passwordVisible;
   final bool confirmPasswordVisible;
   final VoidCallback onTogglePassword;
@@ -893,6 +996,7 @@ class _CreateAccountStep extends StatelessWidget {
         _RoundedField(
           controller: password,
           hint: 'Create a strong password',
+          hasError: passwordsMismatch,
           obscureText: !passwordVisible,
           suffix: IconButton(
             icon: Icon(
@@ -911,6 +1015,9 @@ class _CreateAccountStep extends StatelessWidget {
         _RoundedField(
           controller: confirmPassword,
           hint: 'Re-enter your password',
+          hasError: passwordsMismatch,
+          errorMessage:
+              passwordsMismatch ? 'Passwords do not match' : null,
           obscureText: !confirmPasswordVisible,
           suffix: IconButton(
             icon: Icon(
@@ -1126,12 +1233,14 @@ class _IdentityStep extends StatelessWidget {
   const _IdentityStep({
     required this.govIdFile,
     required this.selfieFile,
+    required this.kycBusy,
     required this.onPickGovId,
     required this.onCaptureSelfie,
   });
 
   final String? govIdFile;
   final String? selfieFile;
+  final bool kycBusy;
   final VoidCallback onPickGovId;
   final VoidCallback onCaptureSelfie;
 
@@ -1185,6 +1294,7 @@ class _IdentityStep extends StatelessWidget {
               'SSS ID, UMID, PhilHealth, Passport, Driver\'s License',
           actionLabel: govIdFile == null ? 'Choose File' : 'Replace File',
           onAction: onPickGovId,
+          disabled: kycBusy,
         ),
         const SizedBox(height: 18),
         _FieldLabel('Liveness Check (Selfie)'),
@@ -1196,6 +1306,7 @@ class _IdentityStep extends StatelessWidget {
           actionLabel: selfieFile == null ? 'Open Camera' : 'Retake',
           onAction: onCaptureSelfie,
           circle: true,
+          disabled: kycBusy,
         ),
         const SizedBox(height: 14),
         Container(
@@ -1239,6 +1350,7 @@ class _UploadDropZone extends StatelessWidget {
     required this.actionLabel,
     required this.onAction,
     this.circle = false,
+    this.disabled = false,
   });
 
   final IconData icon;
@@ -1247,6 +1359,7 @@ class _UploadDropZone extends StatelessWidget {
   final String actionLabel;
   final VoidCallback onAction;
   final bool circle;
+  final bool disabled;
 
   @override
   Widget build(BuildContext context) {
@@ -1305,7 +1418,7 @@ class _UploadDropZone extends StatelessWidget {
               ),
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
-            onPressed: onAction,
+            onPressed: disabled ? null : onAction,
             child: Text(
               actionLabel,
               style: GoogleFonts.inter(
@@ -2423,6 +2536,8 @@ class _RoundedField extends StatelessWidget {
     this.maxLength,
     this.inputFormatters,
     this.onChanged,
+    this.hasError = false,
+    this.errorMessage,
   });
 
   final TextEditingController controller;
@@ -2434,51 +2549,78 @@ class _RoundedField extends StatelessWidget {
   final int? maxLength;
   final List<TextInputFormatter>? inputFormatters;
   final ValueChanged<String>? onChanged;
+  final bool hasError;
+  final String? errorMessage;
+
+  static const _errorRed = Color(0xFFEF4444);
+  static const _errorRedDeep = Color(0xFFDC2626);
 
   @override
   Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      obscureText: obscureText,
-      keyboardType: keyboardType,
-      maxLines: obscureText ? 1 : maxLines,
-      maxLength: maxLength,
-      inputFormatters: inputFormatters,
-      onChanged: onChanged,
-      style: GoogleFonts.inter(
-        fontSize: 14,
-        fontWeight: FontWeight.w600,
-        color: const Color(0xFF0F172A),
-      ),
-      decoration: InputDecoration(
-        hintText: hint,
-        hintStyle: GoogleFonts.inter(
-          fontSize: 13.5,
-          color: const Color(0xFFB6BFCB),
-          fontWeight: FontWeight.w600,
-        ),
-        filled: true,
-        fillColor: Colors.white,
-        suffixIcon: suffix,
-        // Hide the auto-generated character counter when maxLength is set; we
-        // surface our own helper text below the field instead.
-        counterText: maxLength != null ? '' : null,
-        contentPadding: const EdgeInsets.symmetric(
-          horizontal: 16,
-          vertical: 14,
-        ),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(14),
-          borderSide: const BorderSide(
-            color: AgapColors.brandWordmarkBlue,
-            width: 1.4,
+    final enabledSide = BorderSide(
+      color: hasError ? _errorRed : const Color(0xFFE2E8F0),
+      width: hasError ? 1.4 : 1,
+    );
+    final focusedSide = BorderSide(
+      color: hasError ? _errorRedDeep : AgapColors.brandWordmarkBlue,
+      width: 1.4,
+    );
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        TextField(
+          controller: controller,
+          obscureText: obscureText,
+          keyboardType: keyboardType,
+          maxLines: obscureText ? 1 : maxLines,
+          maxLength: maxLength,
+          inputFormatters: inputFormatters,
+          onChanged: onChanged,
+          style: GoogleFonts.inter(
+            fontSize: 14,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF0F172A),
+          ),
+          decoration: InputDecoration(
+            hintText: hint,
+            hintStyle: GoogleFonts.inter(
+              fontSize: 13.5,
+              color: const Color(0xFFB6BFCB),
+              fontWeight: FontWeight.w600,
+            ),
+            filled: true,
+            fillColor: Colors.white,
+            suffixIcon: suffix,
+            // Hide the auto-generated character counter when maxLength is set; we
+            // surface our own helper text below the field instead.
+            counterText: maxLength != null ? '' : null,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 16,
+              vertical: 14,
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: enabledSide,
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(14),
+              borderSide: focusedSide,
+            ),
           ),
         ),
-      ),
+        if (errorMessage != null && errorMessage!.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(top: 6, left: 4),
+            child: Text(
+              errorMessage!,
+              style: GoogleFonts.inter(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: _errorRedDeep,
+              ),
+            ),
+          ),
+      ],
     );
   }
 }

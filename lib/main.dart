@@ -59,17 +59,24 @@ class _AgapShiftBootstrapState extends State<AgapShiftBootstrap> {
   Widget build(BuildContext context) {
     final session = _session;
     final store = _store;
+    final ready = session != null && store != null;
     return MaterialApp(
       title: 'AgapShift',
+      debugShowCheckedModeBanner: false,
       theme: AgapTheme.light(),
-      home: session == null || store == null
-          ? const Scaffold(
+      // Scope must wrap the [Navigator], not only [home], so pushed routes
+      // (Messages inbox/thread, modals, etc.) still see [MarketplaceScope].
+      builder: ready
+          ? (context, child) => MarketplaceScope.fromStore(
+                store: store,
+                session: session,
+                child: child ?? const SizedBox.shrink(),
+              )
+          : null,
+      home: ready
+          ? SessionGate(session: session)
+          : const Scaffold(
               body: Center(child: CircularProgressIndicator()),
-            )
-          : MarketplaceScope.fromStore(
-              store: store,
-              session: session,
-              child: SessionGate(session: session),
             ),
     );
   }

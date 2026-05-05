@@ -9,10 +9,12 @@ class QrTokenCodec {
 
   final String _secret;
 
+  /// [workerId] must be set for worker-shown QRs (employer scans). Omit only for legacy tokens.
   String createToken({
     required String gigId,
     required AttendanceScanType type,
     required DateTime expiresAt,
+    String? workerId,
   }) {
     final payload = <String, dynamic>{
       'v': 1,
@@ -20,6 +22,7 @@ class QrTokenCodec {
       'type': type.name,
       'exp': expiresAt.toUtc().millisecondsSinceEpoch,
       'nonce': DateTime.now().microsecondsSinceEpoch.toString(),
+      if (workerId != null) 'workerId': workerId,
     };
     final body = jsonEncode(payload);
     final sig = _hmac(body);
@@ -45,7 +48,7 @@ class QrTokenCodec {
     if (decoded is! Map) {
       return const QrTokenValidationResult.invalid('Invalid payload');
     }
-    final map = Map<String, dynamic>.from(decoded as Map);
+    final map = Map<String, dynamic>.from(decoded);
     if (map['gigId'] != gigId) {
       return const QrTokenValidationResult.invalid('Wrong gig');
     }
@@ -63,6 +66,61 @@ class QrTokenCodec {
     return QrTokenValidationResult.valid(exp);
   }
 
+  /// Parsed worker attendance QR (signed payload includes [workerId]).
+  WorkerAttendanceQrParseResult parseWorkerAttendance({
+    required String token,
+    required DateTime now,
+  }) {
+    final dot = token.lastIndexOf('.');
+    if (dot <= 0 || dot == token.length - 1) {
+      return WorkerAttendanceQrParseResult.invalid('Malformed token');
+    }
+    final body = token.substring(0, dot);
+    final sig = token.substring(dot + 1);
+    if (_hmac(body) != sig) {
+      return WorkerAttendanceQrParseResult.invalid('Invalid signature');
+    }
+    final decoded = jsonDecode(body);
+    if (decoded is! Map) {
+      return WorkerAttendanceQrParseResult.invalid('Invalid payload');
+    }
+    final map = Map<String, dynamic>.from(decoded);
+    final wid = map['workerId'];
+    if (wid is! String || wid.isEmpty) {
+      return WorkerAttendanceQrParseResult.invalid('Not a worker attendance QR');
+    }
+    final gid = map['gigId'];
+    if (gid is! String || gid.isEmpty) {
+      return WorkerAttendanceQrParseResult.invalid('Missing gig');
+    }
+    final typeRaw = map['type'];
+    if (typeRaw is! String) {
+      return WorkerAttendanceQrParseResult.invalid('Missing scan type');
+    }
+    final type = switch (typeRaw) {
+      'checkIn' => AttendanceScanType.checkIn,
+      'checkOut' => AttendanceScanType.checkOut,
+      _ => null,
+    };
+    if (type == null) {
+      return WorkerAttendanceQrParseResult.invalid('Invalid scan type');
+    }
+    final expMs = map['exp'];
+    if (expMs is! int) {
+      return WorkerAttendanceQrParseResult.invalid('Missing exp');
+    }
+    final exp = DateTime.fromMillisecondsSinceEpoch(expMs, isUtc: true);
+    if (now.toUtc().isAfter(exp)) {
+      return WorkerAttendanceQrParseResult.invalid('Token expired');
+    }
+    return WorkerAttendanceQrParseResult.valid(
+      gigId: gid,
+      workerId: wid,
+      type: type,
+      expiresAt: exp,
+    );
+  }
+
   String _hmac(String body) {
     final key = utf8.encode(_secret);
     final bytes = utf8.encode(body);
@@ -78,6 +136,42 @@ class QrTokenValidationResult {
 
   final bool ok;
   final String? reason;
+  final DateTime? expiresAt;
+}
+
+class WorkerAttendanceQrParseResult {
+  const WorkerAttendanceQrParseResult._({
+    required this.ok,
+    this.reason,
+    this.gigId,
+    this.workerId,
+    this.type,
+    this.expiresAt,
+  });
+
+  const WorkerAttendanceQrParseResult.invalid(String reason)
+      : this._(ok: false, reason: reason);
+
+  factory WorkerAttendanceQrParseResult.valid({
+    required String gigId,
+    required String workerId,
+    required AttendanceScanType type,
+    required DateTime expiresAt,
+  }) {
+    return WorkerAttendanceQrParseResult._(
+      ok: true,
+      gigId: gigId,
+      workerId: workerId,
+      type: type,
+      expiresAt: expiresAt,
+    );
+  }
+
+  final bool ok;
+  final String? reason;
+  final String? gigId;
+  final String? workerId;
+  final AttendanceScanType? type;
   final DateTime? expiresAt;
 }
 

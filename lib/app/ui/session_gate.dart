@@ -12,6 +12,7 @@ import 'screens/dashboard/worker_dashboard_shell.dart';
 import 'screens/onboarding/business_onboarding_screen.dart';
 import 'screens/onboarding/worker_onboarding_screen.dart';
 import 'screens/status/verification_status_screen.dart';
+import 'widgets/logout_confirmation.dart';
 
 class SessionGate extends StatelessWidget {
   const SessionGate({super.key, required this.session});
@@ -24,6 +25,13 @@ class SessionGate extends StatelessWidget {
       animation: session,
       builder: (context, _) {
         final state = session.state;
+
+        Future<void> guardedSignOut() async {
+          if (!context.mounted) return;
+          final ok = await confirmLogout(context);
+          if (ok && context.mounted) await session.signOut();
+        }
+
         switch (state.stage) {
           case AuthStage.needsGettingStarted:
             return GettingStartedScreen(
@@ -74,7 +82,7 @@ class SessionGate extends StatelessWidget {
             final marketplace = MarketplaceScope.of(context);
             if (role == UserRole.business) {
               return BusinessDashboardShell(
-                onSignOut: session.signOut,
+                onSignOut: guardedSignOut,
                 repo: marketplace.repo,
                 notifications: marketplace.notifications,
                 payments: marketplace.payments,
@@ -84,7 +92,7 @@ class SessionGate extends StatelessWidget {
               );
             }
             return WorkerDashboardShell(
-              onSignOut: session.signOut,
+              onSignOut: guardedSignOut,
               onDebugSetStatus: session.setAccountStatus,
               repo: marketplace.repo,
               notifications: marketplace.notifications,

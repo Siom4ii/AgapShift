@@ -1,12 +1,19 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:latlong2/latlong.dart';
 
 import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
+import '../../../location/davao_del_sur_scope.dart';
+import '../../../location/user_geo_point.dart';
 import '../../../marketplace/marketplace_repository.dart';
-import '../../../notifications/mock_notification_repository.dart';
+import '../../../notifications/notification_repository.dart';
 import '../../../session/session_controller.dart';
 import '../../theme/agap_colors.dart';
 import '../../widgets/shell_screen_polish.dart';
@@ -21,7 +28,7 @@ class WorkerGigsScreen extends StatefulWidget {
   });
 
   final MarketplaceRepository repo;
-  final MockNotificationRepository notifications;
+  final NotificationRepository notifications;
   final SessionController session;
 
   @override
@@ -38,12 +45,50 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
   List<Gig> _items = const [];
   String? _error;
 
-  GeoPoint get _center => const GeoPoint(lat: 14.5995, lng: 120.9842);
+  final MapController _mapController = MapController();
+
+  /// Search center for [listNearbyGigs] (Davao del Sur default ≈ Digos).
+  LatLng _mapCenter = LatLng(
+    DavaoDelSurScope.defaultCenter.lat,
+    DavaoDelSurScope.defaultCenter.lng,
+  );
+
+  GeoPoint get _searchCenter =>
+      GeoPoint(lat: _mapCenter.latitude, lng: _mapCenter.longitude);
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _bootstrap();
+  }
+
+  Future<void> _bootstrap() async {
+    final g = await tryGetCurrentUserGeoPoint();
+    if (!mounted) {
+      return;
+    }
+    if (g != null) {
+      final gp = GeoPoint(lat: g.lat, lng: g.lng);
+      final ll = DavaoDelSurScope.contains(gp)
+          ? LatLng(g.lat, g.lng)
+          : LatLng(
+              DavaoDelSurScope.defaultCenter.lat,
+              DavaoDelSurScope.defaultCenter.lng,
+            );
+      setState(() => _mapCenter = ll);
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          _mapController.move(ll, 13);
+        }
+      });
+    }
+    await _load();
+  }
+
+  @override
+  void dispose() {
+    _mapController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -53,18 +98,20 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
     });
     try {
       final items = await widget.repo.listNearbyGigs(
-        center: _center,
+        center: _searchCenter,
         radiusMeters: _radiusM,
         minPayAmount: _minPay == 0 ? null : _minPay,
         category: _category.isEmpty ? null : _category,
       );
-      if (!mounted) return;
-      setState(() => _items = items);
+      if (mounted) {
+        setState(() => _items = items);
+      }
     } catch (e) {
-      if (!mounted) return;
-      setState(() => _error = '$e');
-    } finally {
-      if (!mounted) return;
+      if (mounted) {
+        setState(() => _error = '$e');
+      }
+    }
+    if (mounted) {
       setState(() => _loading = false);
     }
   }
@@ -161,11 +208,90 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
     );
   }
 
+  Future<void> _recenterOnMyLocation() async {
+    try {
+      if (!kIsWeb) {
+        final on = await Geolocator.isLocationServiceEnabled();
+        if (!on) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Turn on location services to use this feature.'),
+            ),
+          );
+          return;
+        }
+      }
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied ||
+          perm == LocationPermission.deniedForever) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Location permission is required to use your position.'),
+          ),
+        );
+        return;
+      }
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 20),
+        ),
+      );
+      if (!mounted) return;
+      final ll = LatLng(pos.latitude, pos.longitude);
+      setState(() => _mapCenter = ll);
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _mapController.move(ll, 14);
+      });
+      await _load();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Could not get your location. Try again.'),
+        ),
+      );
+    }
+  }
+
+  List<Marker> _gigMarkers(BuildContext context) {
+    return [
+      for (final g in _filtered.take(40))
+        Marker(
+          point: LatLng(g.location.lat, g.location.lng),
+          width: 76,
+          height: 92,
+          alignment: Alignment.bottomCenter,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () async {
+              await Navigator.of(context).push<void>(
+                MaterialPageRoute<void>(
+                  builder: (_) => WorkerGigDetailsScreen(
+                    repo: widget.repo,
+                    notifications: widget.notifications,
+                    session: widget.session,
+                    gigId: g.id,
+                  ),
+                ),
+              );
+              if (context.mounted) await _load();
+            },
+            child: _MapPin(gig: g),
+          ),
+        ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final h = constraints.maxHeight;
         return Stack(
           clipBehavior: Clip.none,
           fit: StackFit.expand,
@@ -174,7 +300,56 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
               child: Stack(
                 clipBehavior: Clip.none,
                 children: [
-                  Positioned.fill(child: const _FakeMapLayer()),
+                  Positioned.fill(
+                    child: FlutterMap(
+                      mapController: _mapController,
+                      options: MapOptions(
+                        initialCenter: _mapCenter,
+                        initialZoom: 13,
+                        interactionOptions: const InteractionOptions(
+                          flags: InteractiveFlag.all,
+                        ),
+                      ),
+                      children: [
+                        TileLayer(
+                          urlTemplate:
+                              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                          userAgentPackageName: 'dev.agapshift.nexora',
+                        ),
+                        MarkerLayer(markers: _gigMarkers(context)),
+                      ],
+                    ),
+                  ),
+                  Positioned(
+                    left: 8,
+                    bottom: MediaQuery.paddingOf(context).bottom + 8,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.92),
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.08),
+                            blurRadius: 6,
+                          ),
+                        ],
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        child: Text(
+                          '© OpenStreetMap',
+                          style: GoogleFonts.inter(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: AgapColors.textMuted,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
                   if (_loading)
                     const Positioned.fill(
                       child: ColoredBox(
@@ -206,7 +381,7 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
                       children: [
                         _MapFab(
                           icon: Icons.my_location_rounded,
-                          onPressed: () {},
+                          onPressed: _recenterOnMyLocation,
                         ),
                         const SizedBox(height: 10),
                         _MapFab(
@@ -216,7 +391,6 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
                       ],
                     ),
                   ),
-                  ..._buildPins(context, h),
                 ],
               ),
             ),
@@ -229,7 +403,7 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
                   scrollController: scrollController,
                   gigs: _filtered,
                   matchCount: _filtered.length,
-                  center: _center,
+                  center: _searchCenter,
                   onRefresh: _load,
                   onTapGig: (g) async {
                     await Navigator.of(context).push(
@@ -251,79 +425,6 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
           ],
         );
       },
-    );
-  }
-
-  List<Widget> _buildPins(BuildContext context, double stackHeight) {
-    final w = MediaQuery.sizeOf(context).width;
-    final mapH = stackHeight * 0.52;
-    final items = _filtered.take(6).toList();
-    return [
-      for (var i = 0; i < items.length; i++)
-        Positioned(
-          left: _pinDx(items[i].id, w) - 28,
-          top: _pinDy(items[i].id, mapH) - 36,
-          child: _MapPin(gig: items[i]),
-        ),
-    ];
-  }
-}
-
-double _pinDx(String id, double width) {
-  final h = id.hashCode.abs();
-  return 0.12 * width + (h % 73) / 100.0 * width * 0.62;
-}
-
-double _pinDy(String id, double height) {
-  final h = id.hashCode.abs();
-  return 0.1 * height + ((h ~/ 5) % 71) / 100.0 * height * 0.65;
-}
-
-class _FakeMapLayer extends StatelessWidget {
-  const _FakeMapLayer();
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: [AgapColors.water, Color(0xFFD4E8F5)],
-        ),
-      ),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          Positioned(
-            left: -40,
-            top: 40,
-            child: Transform.rotate(
-              angle: -0.15,
-              child: Container(
-                width: 320,
-                height: 280,
-                decoration: BoxDecoration(
-                  color: AgapColors.mintSoft.withValues(alpha: 0.85),
-                  borderRadius: BorderRadius.circular(120),
-                ),
-              ),
-            ),
-          ),
-          Positioned(
-            right: -60,
-            bottom: 20,
-            child: Container(
-              width: 260,
-              height: 220,
-              decoration: BoxDecoration(
-                color: const Color(0xFFC5E6D8).withValues(alpha: 0.9),
-                borderRadius: BorderRadius.circular(100),
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 }

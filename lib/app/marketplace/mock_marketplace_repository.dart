@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import '../../domain/enums.dart';
 import '../../domain/models.dart';
+import '../location/davao_del_sur_scope.dart';
 import '../storage/kv_store.dart';
 import 'marketplace_repository.dart';
 
@@ -19,7 +20,10 @@ class MockMarketplaceRepository implements MarketplaceRepository {
     final raw = await _store.getString(_kGigs);
     if (raw == null || raw.isEmpty) return [];
     final decoded = jsonDecode(raw) as List<dynamic>;
-    return decoded.map((e) => _gigFromJson(e as Map<String, dynamic>)).toList();
+    return decoded
+        .map((e) => _gigFromJson(e as Map<String, dynamic>))
+        .where((g) => DavaoDelSurScope.contains(g.location))
+        .toList();
   }
 
   Future<Gig> createGig({
@@ -32,7 +36,14 @@ class MockMarketplaceRepository implements MarketplaceRepository {
     required DateTime endAt,
     required Money pay,
     required String category,
+    int? workersNeeded,
+    bool isUrgent = false,
   }) async {
+    if (!DavaoDelSurScope.contains(location)) {
+      throw ArgumentError(
+        'Gig location must be inside ${DavaoDelSurScope.regionLabel}.',
+      );
+    }
     final gigs = await listGigs();
     final id = 'gig_${DateTime.now().microsecondsSinceEpoch}';
     final now = DateTime.now().toUtc();
@@ -49,15 +60,22 @@ class MockMarketplaceRepository implements MarketplaceRepository {
       category: category,
       status: GigStatus.open,
       createdAt: now,
+      workersNeeded: workersNeeded,
+      isUrgent: isUrgent,
     );
     await _saveGigs([...gigs, gig]);
     return gig;
   }
 
   Future<Gig?> getGig(String gigId) async {
-    final gigs = await listGigs();
-    for (final g in gigs) {
-      if (g.id == gigId) return g;
+    final raw = await _store.getString(_kGigs);
+    if (raw == null || raw.isEmpty) return null;
+    final decoded = jsonDecode(raw) as List<dynamic>;
+    for (final e in decoded) {
+      final g = _gigFromJson(e as Map<String, dynamic>);
+      if (g.id == gigId) {
+        return DavaoDelSurScope.contains(g.location) ? g : null;
+      }
     }
     return null;
   }
@@ -72,6 +90,7 @@ class MockMarketplaceRepository implements MarketplaceRepository {
     final filtered = <_ScoredGig>[];
     for (final g in gigs) {
       if (g.status != GigStatus.open) continue;
+      if (!DavaoDelSurScope.contains(g.location)) continue;
       if (category != null && category.isNotEmpty && g.category != category) continue;
       if (minPayAmount != null && g.pay.amount < minPayAmount) continue;
       final d = _distanceMeters(center, g.location);
@@ -175,6 +194,8 @@ class MockMarketplaceRepository implements MarketplaceRepository {
       category: gig.category,
       status: GigStatus.filled,
       createdAt: gig.createdAt,
+      workersNeeded: gig.workersNeeded,
+      isUrgent: gig.isUrgent,
     );
     final updatedGigs = [...gigs]..[idx] = updatedGig;
     await _saveGigs(updatedGigs);
@@ -216,6 +237,8 @@ class MockMarketplaceRepository implements MarketplaceRepository {
       category: gig.category,
       status: GigStatus.cancelled,
       createdAt: gig.createdAt,
+      workersNeeded: gig.workersNeeded,
+      isUrgent: gig.isUrgent,
     );
     final updatedGigs = [...gigs]..[idx] = updated;
     await _saveGigs(updatedGigs);
@@ -251,6 +274,8 @@ class MockMarketplaceRepository implements MarketplaceRepository {
         'category': g.category,
         'status': g.status.name,
         'createdAt': g.createdAt.toIso8601String(),
+        'workersNeeded': g.workersNeeded,
+        'isUrgent': g.isUrgent,
       };
 
   Gig _gigFromJson(Map<String, dynamic> j) => Gig(
@@ -272,6 +297,10 @@ class MockMarketplaceRepository implements MarketplaceRepository {
         category: j['category'] as String,
         status: GigStatus.values.firstWhere((e) => e.name == (j['status'] as String)),
         createdAt: DateTime.parse(j['createdAt'] as String),
+        workersNeeded: j['workersNeeded'] == null
+            ? null
+            : (j['workersNeeded'] as num).toInt(),
+        isUrgent: j['isUrgent'] == true,
       );
 
   Map<String, dynamic> _appToJson(GigApplication a) => {

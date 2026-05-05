@@ -3,8 +3,9 @@ import 'dart:convert';
 import '../../domain/enums.dart';
 import '../../domain/models.dart';
 import '../storage/kv_store.dart';
+import 'payments_repository.dart';
 
-class MockPaymentsRepository {
+class MockPaymentsRepository implements PaymentsRepository {
   MockPaymentsRepository(this._store);
 
   final KvStore _store;
@@ -14,6 +15,7 @@ class MockPaymentsRepository {
   static const _kLedger = 'agapshift.payments.ledger'; // list
   static const _kPayouts = 'agapshift.payments.payouts'; // list
 
+  @override
   Future<Wallet> getWallet(String userId) async {
     final wallets = await _loadWallets();
     return wallets[userId] ??
@@ -25,29 +27,34 @@ class MockPaymentsRepository {
         );
   }
 
+  @override
   Future<List<LedgerTransaction>> listLedger(String userId) async {
     final all = await _loadLedger();
     return all.where((t) => t.userId == userId).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
+  @override
   Future<List<Payout>> listPayouts(String userId) async {
     final all = await _loadPayouts();
     return all.where((p) => p.userId == userId).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
+  @override
   Future<Escrow?> getEscrowForGig(String gigId) async {
     final escrows = await _loadEscrows();
     return escrows[gigId];
   }
 
+  @override
   Future<bool> isEscrowFunded(String gigId) async {
     final e = await getEscrowForGig(gigId);
     if (e == null) return false;
     return e.status == EscrowStatus.funded || e.status == EscrowStatus.held;
   }
 
+  @override
   Future<Escrow> fundEscrow({
     required String gigId,
     required String businessId,
@@ -84,6 +91,7 @@ class MockPaymentsRepository {
     return escrow;
   }
 
+  @override
   Future<Escrow> holdEscrow({required String gigId}) async {
     final escrows = await _loadEscrows();
     final existing = escrows[gigId];
@@ -101,6 +109,7 @@ class MockPaymentsRepository {
     return updated;
   }
 
+  @override
   Future<Escrow> releaseEscrowToWorker({
     required String gigId,
     required String workerId,
@@ -140,6 +149,7 @@ class MockPaymentsRepository {
     return updated;
   }
 
+  @override
   Future<Escrow> refundEscrow({
     required String gigId,
     required String businessId,
@@ -174,6 +184,7 @@ class MockPaymentsRepository {
     return updated;
   }
 
+  @override
   Future<Payout> requestWithdrawal({
     required String userId,
     required Money amount,
