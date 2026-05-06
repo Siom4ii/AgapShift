@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:google_fonts/google_fonts.dart';
 
 import '../../../marketplace/marketplace_scope.dart';
@@ -14,6 +15,7 @@ import '../../theme/agap_colors.dart';
 import '../../widgets/kyc_upload_zone.dart';
 import 'davao_del_sur_locations.dart';
 import 'onboarding_location_widgets.dart';
+import 'liveness_check_screen.dart';
 
 enum _CollegeTrack { none, undergraduate, graduate }
 
@@ -237,11 +239,11 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
 
   Future<void> _next() async {
     if (!_canContinue || _submitting) return;
+    final sessionCtrl = MarketplaceScope.of(context).session;
 
     if (_step == 0 && SupabaseConfig.isConfigured) {
       setState(() => _submitting = true);
-      final session = MarketplaceScope.of(context).session;
-      final result = await session.signUpWithEmailPassword(
+      final result = await sessionCtrl.signUpWithEmailPassword(
         email: _email.text.trim(),
         password: _password.text,
       );
@@ -253,12 +255,27 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
         case SignUpResult.success:
           break;
         case SignUpResult.emailAlreadyRegistered:
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'This email is already in use. Sign in from the login screen, '
-                'or use the password for this email.',
+          await showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Email already exists'),
+              content: const Text(
+                'An account with this email already exists. Please sign in instead.',
               ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('Use different email'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    Navigator.of(ctx).pop();
+                    // Avoid using BuildContext across async gaps.
+                    unawaited(sessionCtrl.goBackToLogin());
+                  },
+                  child: const Text('Go to login'),
+                ),
+              ],
             ),
           );
           return;
@@ -288,7 +305,7 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
         _step += 1;
       });
       if (completed == 0) {
-        await MarketplaceScope.of(context).session.markOnboardingAccountStepFinished();
+        await sessionCtrl.markOnboardingAccountStepFinished();
       }
     } else {
       await _submitWorkerResponsesToSupabase();
@@ -466,13 +483,6 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('No file selected.'),
-          action: SnackBarAction(
-            label: 'Use demo',
-            onPressed: () => setState(() {
-              _govIdFile = 'demo_government_id.jpg';
-              _govIdStoragePath = null;
-            }),
-          ),
         ),
       );
       return;
@@ -517,25 +527,21 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
   }
 
   Future<void> _captureSelfie() async {
-    final file = await pickKycSelfieImageFile();
+    final bytes = await Navigator.of(context).push<Uint8List>(
+      MaterialPageRoute(builder: (_) => const LivenessCheckScreen()),
+    );
     if (!mounted) return;
-    if (file == null) {
+    if (bytes == null || bytes.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('No selfie selected.'),
-          action: SnackBarAction(
-            label: 'Use demo',
-            onPressed: () => setState(() {
-              _selfieFile = 'demo_selfie.jpg';
-              _selfieStoragePath = null;
-            }),
-          ),
-        ),
+        const SnackBar(content: Text('Liveness check was not completed.')),
       );
       return;
     }
 
-    final label = kycFileLabel(file);
+    final now = DateTime.now();
+    final label = 'selfie_${now.millisecondsSinceEpoch}.jpg';
+    final platformFile = PlatformFile(name: label, size: bytes.length, bytes: bytes);
+
     if (!SupabaseConfig.isConfigured) {
       setState(() {
         _selfieFile = label;
@@ -547,7 +553,7 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
     setState(() => _kycBusy = true);
     try {
       final path = await KycStorageService.upload(
-        file: file,
+        file: platformFile,
         flow: 'worker',
         documentType: 'selfie',
       );
@@ -1272,32 +1278,12 @@ class _IdentityStep extends StatelessWidget {
           disabled: kycBusy,
         ),
         const SizedBox(height: 14),
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          decoration: BoxDecoration(
-            color: const Color(0xFFE6FBF1),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFB7EAD2)),
-          ),
-          child: Row(
-            children: [
-              Icon(
-                Icons.verified_rounded,
-                color: AgapColors.brandWordmarkGreen,
-                size: 18,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  'Demo mode: Identity verification will be simulated',
-                  style: GoogleFonts.inter(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF065F46),
-                  ),
-                ),
-              ),
-            ],
+        Text(
+          'Please upload clear photos. Blurry images may delay verification.',
+          style: GoogleFonts.inter(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w600,
+            color: AgapColors.textMuted,
           ),
         ),
       ],
@@ -2047,7 +2033,7 @@ class _ApplicationSubmittedView extends StatelessWidget {
                         border: Border.all(color: const Color(0xFFFCD9A0)),
                       ),
                       child: Text(
-                        'Demo: Account will be auto-approved in a few seconds for demonstration purposes.',
+                        'Please keep the app open while we review your submitted documents.',
                         textAlign: TextAlign.center,
                         style: GoogleFonts.inter(
                           fontSize: 12.5,

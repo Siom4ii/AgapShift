@@ -45,16 +45,6 @@ class _WorkerIdentityVerificationScreenState extends State<WorkerIdentityVerific
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('No file selected. Picker may be unavailable on this device.'),
-          action: SnackBarAction(
-            label: 'Use demo',
-            onPressed: () => setState(() {
-              if (front) {
-                _idFront = 'demo_id_front.jpg';
-              } else {
-                _idBack = 'demo_id_back.jpg';
-              }
-            }),
-          ),
         ),
       );
       return;
@@ -112,10 +102,6 @@ class _WorkerIdentityVerificationScreenState extends State<WorkerIdentityVerific
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('No photo selected.'),
-          action: SnackBarAction(
-            label: 'Use demo selfie',
-            onPressed: () => setState(() => _selfieDone = true),
-          ),
         ),
       );
       return;
@@ -150,17 +136,6 @@ class _WorkerIdentityVerificationScreenState extends State<WorkerIdentityVerific
     } finally {
       if (mounted) setState(() => _uploadBusy = false);
     }
-  }
-
-  void _useFullDemoVerification() {
-    setState(() {
-      _idFront = 'demo_id_front.jpg';
-      _idBack = 'demo_id_back.jpg';
-      _selfieDone = true;
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Demo verification applied — you can continue.')),
-    );
   }
 
   Future<void> _submit() async {
@@ -295,19 +270,6 @@ class _WorkerIdentityVerificationScreenState extends State<WorkerIdentityVerific
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 16),
-                  Center(
-                    child: TextButton(
-                      onPressed: _useFullDemoVerification,
-                      child: Text(
-                        'Use demo verification (skip uploads)',
-                        style: GoogleFonts.inter(
-                          fontWeight: FontWeight.w600,
-                          color: AgapColors.primaryBright,
-                          decoration: TextDecoration.underline,
-                        ),
-                      ),
-                    ),
-                  ),
                 ],
               ),
             ),

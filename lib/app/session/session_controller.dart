@@ -30,6 +30,8 @@ class SessionController extends ChangeNotifier {
   static const _kEmail = 'agapshift.email';
   static const _kOnboardingDone = 'agapshift.onboardingDone';
   static const _kAccountStatus = 'agapshift.accountStatus';
+  /// One-time modal shown the first time a user opens the app after becoming verified.
+  static const _kVerifiedCongratsShown = 'agapshift.verifiedCongratsShown';
   /// JSON string of [profiles.identity_snapshot] (business or worker flow).
   static const _kIdentitySnapshotJson = 'agapshift.profileIdentitySnapshotJson';
   // Pipe-separated mock list of registered account emails — lets us check
@@ -86,6 +88,14 @@ class SessionController extends ChangeNotifier {
   /// the dashboard instead of staying on “Create Account”.
   Future<void> refreshFromSupabaseProfile() async {
     await _applySupabaseSessionToLocal();
+  }
+
+  Future<bool> hasShownVerifiedCongrats() async {
+    return (await _store.getString(_kVerifiedCongratsShown)) == '1';
+  }
+
+  Future<void> markVerifiedCongratsShown() async {
+    await _store.setString(_kVerifiedCongratsShown, '1');
   }
 
   Future<void> load() async {
@@ -390,8 +400,7 @@ class SessionController extends ChangeNotifier {
   }
 
   /// Supabase sign-up after onboarding "Create Account" (step 0). Mock/offline
-  /// builds return [SignUpResult.skipped]. If the email is already registered,
-  /// tries [signInWithPassword] with the same password (covers returning users).
+  /// builds return [SignUpResult.skipped].
   Future<SignUpResult> signUpWithEmailPassword({
     required String email,
     required String password,
@@ -410,18 +419,8 @@ class SessionController extends ChangeNotifier {
       return SignUpResult.success;
     } on AuthException catch (e) {
       if (_duplicateRegistrationMessage(e)) {
-        try {
-          await Supabase.instance.client.auth.signInWithPassword(
-            email: trimmed,
-            password: password,
-          );
-          await _syncEmailAfterSupabaseSignUp(normalized);
-          return SignUpResult.success;
-        } on AuthException {
-          return SignUpResult.emailAlreadyRegistered;
-        } catch (_) {
-          return SignUpResult.unexpectedError;
-        }
+        // Product rule: existing emails must sign in (do not continue onboarding here).
+        return SignUpResult.emailAlreadyRegistered;
       }
       final m = e.message.toLowerCase();
       if (m.contains('password')) return SignUpResult.weakPassword;
@@ -563,6 +562,7 @@ class SessionController extends ChangeNotifier {
     await _store.remove(_kAccountStatus);
     await _store.remove(_kIdentitySnapshotJson);
     await _store.remove(_kRegistrationRoleFirst);
+    await _store.remove(_kVerifiedCongratsShown);
     await _rebuildStateFromKv();
   }
 
@@ -580,6 +580,7 @@ class SessionController extends ChangeNotifier {
     await _store.remove(_kRegistrationRoleFirst);
     await _store.remove(_kAccounts);
     await _store.remove(_kIdentitySnapshotJson);
+    await _store.remove(_kVerifiedCongratsShown);
     _state = const SessionState(
       stage: AuthStage.needsGettingStarted,
       role: null,

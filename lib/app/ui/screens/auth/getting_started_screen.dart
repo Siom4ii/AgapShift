@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:google_fonts/google_fonts.dart';
 
-import '../../branding/agap_logo_assets.dart';
 import '../../theme/agap_colors.dart';
 
 class GettingStartedScreen extends StatelessWidget {
@@ -23,27 +22,20 @@ class GettingStartedScreen extends StatelessWidget {
               child: Column(
                 children: [
                   const Spacer(),
-                  Center(child: AgapLogoMarkTile(size: 240))
-                      .animate()
-                      .fadeIn(duration: 420.ms)
-                      .scale(begin: const Offset(0.92, 0.92), end: const Offset(1, 1), curve: Curves.easeOutBack),
-                  const SizedBox(height: 1),
-                  Text(
-                    'AgapShift',
-                    style: GoogleFonts.inter(
-                      fontSize: 38,
-                      fontWeight: FontWeight.w900,
-                      letterSpacing: -1.1,
-                      height: 1.05,
-                      color: Colors.white,
+                  Center(
+                    child: Image.asset(
+                      'branding/main.png',
+                      width: 220,
+                      height: 220,
+                      fit: BoxFit.contain,
                     ),
                   )
                       .animate()
-                      .fadeIn(delay: 100.ms, duration: 420.ms)
-                      .slideY(begin: 0.08, end: 0, curve: Curves.easeOutCubic),
-                  const SizedBox(height: 8),
+                      .fadeIn(duration: 420.ms)
+                      .scale(begin: const Offset(0.92, 0.92), end: const Offset(1, 1), curve: Curves.easeOutBack),
+                  const SizedBox(height: 25),
                   Text(
-                    'Your trusted gig work marketplace',
+                    'Connecting Ready Workers with Ready Jobs',
                     textAlign: TextAlign.center,
                     style: GoogleFonts.inter(
                       fontSize: 14.5,
@@ -51,19 +43,19 @@ class GettingStartedScreen extends StatelessWidget {
                       color: Colors.white.withValues(alpha: 0.9),
                     ),
                   ).animate().fadeIn(delay: 160.ms, duration: 420.ms),
-                  const SizedBox(height: 24),
+                  const SizedBox(height: 80),
                   const _FeaturePill(
                     icon: Icons.bolt_rounded,
                     label: 'Instant hiring & job matching',
                     iconColor: AgapColors.brandBoltYellow,
                   ).animate().fadeIn(delay: 220.ms, duration: 380.ms).slideY(begin: 0.08, end: 0),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 14),
                   const _FeaturePill(
                     icon: Icons.place_rounded,
                     label: 'Location-based nearby gigs',
                     iconColor: Color(0xFF93C5FD),
                   ).animate().fadeIn(delay: 280.ms, duration: 380.ms).slideY(begin: 0.08, end: 0),
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 14),
                   const _FeaturePill(
                     icon: Icons.verified_user_rounded,
                     label: 'Verified workers & businesses',
@@ -97,9 +89,9 @@ class GettingStartedScreen extends StatelessWidget {
                       ),
                       children: const [
                         TextSpan(text: 'By continuing, you agree to our '),
-                        TextSpan(text: 'Terms', style: TextStyle(decoration: TextDecoration.underline)),
+                        TextSpan(text: 'Terms'),
                         TextSpan(text: ' & '),
-                        TextSpan(text: 'Privacy Policy', style: TextStyle(decoration: TextDecoration.underline)),
+                        TextSpan(text: 'Privacy Policy'),
                       ],
                     ),
                     textAlign: TextAlign.center,

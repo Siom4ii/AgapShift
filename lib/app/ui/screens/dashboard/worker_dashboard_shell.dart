@@ -57,6 +57,8 @@ class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
       if (!_verificationPopupShown) {
         _verificationPopupShown = true;
         await showVerificationReviewDialog(context, session: widget.session);
+        if (!mounted) return;
+        await showVerifiedCongratsDialog(context, session: widget.session);
       }
       if (mounted) {
         await _syncNotificationBadge();

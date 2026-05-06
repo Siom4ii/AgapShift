@@ -51,6 +51,8 @@ dependencies:
   geolocator: ^13.0.2
   http: ^1.2.2
   mobile_scanner: ^7.2.0
+  camera: ^0.11.0+2
+  google_mlkit_face_detection: ^0.13.1
 
 dev_dependencies:
   flutter_test:
@@ -80,6 +82,7 @@ flutter:
     - branding/logo2.png
     - branding/logo3.png
     - branding/logo3_cropped.png
+    - branding/main.png
     - assets/supabase.env
 
   # An image asset can refer to one or more resolution-specific "variants", see

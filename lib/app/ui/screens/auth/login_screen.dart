@@ -281,7 +281,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   Center(child: _LogoLockBadge()),
                   const SizedBox(height: 28),
                   Text(
-                    'Welcome back',
+                    'Welcome to AgapShift',
                     textAlign: TextAlign.center,
                     style: GoogleFonts.inter(
                       fontSize: 30,
@@ -293,7 +293,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 10),
                   Text(
-                    'Sign in to continue with AgapShift',
+                    'Sign in to continue',
                     textAlign: TextAlign.center,
                     style: GoogleFonts.inter(
                       fontSize: 15,
@@ -474,7 +474,7 @@ class _LogoLockBadge extends StatelessWidget {
         ),
       ),
       child: Icon(
-        Icons.lock_rounded,
+        Icons.login_rounded,
         color: AgapColors.brandWordmarkBlue,
         size: 42,
       ),

@@ -14,7 +14,7 @@ bool canPerformVerifiedAction(SessionController session) {
 }
 
 /// Surface a friendly dialog when an unverified user taps a restricted
-/// feature. Provides a CTA to open the verification flow.
+/// feature. Directs users to wait for admin review.
 Future<void> showLockedFeatureDialog(
   BuildContext context, {
   required SessionController session,
@@ -48,7 +48,7 @@ Future<void> showLockedFeatureDialog(
         ],
       ),
       content: Text(
-        'This feature is available after account verification. Complete verification to unlock all features.',
+        'This feature is available after account verification. Your documents are reviewed by our admin team.',
         style: GoogleFonts.inter(
           fontSize: 13.5,
           height: 1.5,
@@ -79,13 +79,12 @@ Future<void> showLockedFeatureDialog(
                 builder: (_) => VerificationStatusScreen(
                   status: status,
                   onReset: session.resetAll,
-                  onDemoMarkVerified: () => session.setAccountStatus(AccountStatus.verified),
                 ),
               ),
             );
           },
           child: Text(
-            'Complete Verification',
+            'View status',
             style: GoogleFonts.inter(fontWeight: FontWeight.w900),
           ),
         ),

@@ -10,7 +10,7 @@ import '../theme/agap_colors.dart';
 ///
 /// • Verified → green check pill with "Account Verified".
 /// • Pending → yellow timeline (Created ✓ → Submitted ✓ → Review ⏳ → Verified ⬜)
-///   plus a "Complete Verification" CTA.
+///   no action required (admin review).
 /// • Rejected → red copy + "Resubmit Documents" CTA.
 class VerificationStatusCard extends StatelessWidget {
   const VerificationStatusCard({
@@ -177,34 +177,6 @@ class _PendingCard extends StatelessWidget {
           const _TimelineItem(label: 'Documents Submitted', state: _Step.done),
           const _TimelineItem(label: 'Admin Review', state: _Step.inProgress),
           const _TimelineItem(label: 'Account Verified', state: _Step.pending, isLast: true),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              style: FilledButton.styleFrom(
-                backgroundColor: accent,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              ),
-              onPressed: () async {
-                await Navigator.of(context).push(
-                  MaterialPageRoute<void>(
-                    builder: (_) => VerificationStatusScreen(
-                      status: AccountStatus.pendingVerification,
-                      onReset: session.resetAll,
-                      onDemoMarkVerified: () => session.setAccountStatus(AccountStatus.verified),
-                    ),
-                  ),
-                );
-              },
-              icon: const Icon(Icons.shield_outlined, size: 18),
-              label: Text(
-                'Complete Verification',
-                style: GoogleFonts.inter(fontSize: 13, fontWeight: FontWeight.w900),
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -282,7 +254,6 @@ class _RejectedCard extends StatelessWidget {
                     builder: (_) => VerificationStatusScreen(
                       status: status,
                       onReset: session.resetAll,
-                      onDemoMarkVerified: () => session.setAccountStatus(AccountStatus.verified),
                     ),
                   ),
                 );

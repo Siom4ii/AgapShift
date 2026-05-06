@@ -433,10 +433,10 @@ class _HomeHeader extends StatelessWidget {
                   end: Alignment.bottomRight,
                   colors: [
                     Color(0xFF0B1220),
-                    Color(0xFF0F4C44),
-                    Color(0xFF10B981),
+                    Color(0xFF1A4384),
+                    Color(0xFF2563EB),
                   ],
-                  stops: [0.0, 0.48, 1.0],
+                  stops: [0.0, 0.55, 1.0],
                 ),
               ),
             ),
@@ -464,7 +464,7 @@ class _HomeHeader extends StatelessWidget {
                 height: 200,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
-                  color: const Color(0xFF34D399).withValues(alpha: 0.18),
+                  color: const Color(0xFF60A5FA).withValues(alpha: 0.16),
                 ),
               ),
             ),
@@ -585,7 +585,7 @@ class _HomeHeader extends StatelessWidget {
                           width: 28,
                           height: 28,
                           decoration: BoxDecoration(
-                            color: const Color(0xFF22C55E),
+                            color: const Color(0xFF2563EB),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           child: const Icon(
@@ -716,16 +716,16 @@ class _ActiveShiftBanner extends StatelessWidget {
           begin: Alignment.centerLeft,
           end: Alignment.centerRight,
           colors: [
-            Color(0xFF22C55E),
-            Color(0xFF14B8A6),
-            Color(0xFF0EA5E9),
+            Color(0xFF2563EB),
+            Color(0xFF3B82F6),
+            Color(0xFF06B6D4),
           ],
           stops: [0.0, 0.55, 1.0],
         ),
         borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: const Color(0xFF0D9488).withValues(alpha: 0.35),
+            color: const Color(0xFF2563EB).withValues(alpha: 0.35),
             blurRadius: 20,
             offset: const Offset(0, 10),
           ),

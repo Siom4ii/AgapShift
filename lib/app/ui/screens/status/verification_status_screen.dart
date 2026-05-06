@@ -7,12 +7,10 @@ class VerificationStatusScreen extends StatelessWidget {
     super.key,
     required this.status,
     required this.onReset,
-    this.onDemoMarkVerified,
   });
 
   final AccountStatus status;
   final Future<void> Function() onReset;
-  final Future<void> Function()? onDemoMarkVerified;
 
   @override
   Widget build(BuildContext context) {
@@ -56,15 +54,6 @@ class VerificationStatusScreen extends StatelessWidget {
               if (status != AccountStatus.verified)
                 Column(
                   children: [
-                    if (onDemoMarkVerified != null)
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton(
-                          onPressed: () async => onDemoMarkVerified!(),
-                          child: const Text('Demo: Mark as Verified'),
-                        ),
-                      ),
-                    if (onDemoMarkVerified != null) const SizedBox(height: 10),
                     SizedBox(
                       width: double.infinity,
                       child: OutlinedButton(

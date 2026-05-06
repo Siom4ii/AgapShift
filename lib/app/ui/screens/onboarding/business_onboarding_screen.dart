@@ -331,11 +331,11 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
 
   Future<void> _next() async {
     if (!_canContinue || _submitting) return;
+    final sessionCtrl = MarketplaceScope.of(context).session;
 
     if (_step == 0 && SupabaseConfig.isConfigured) {
       setState(() => _submitting = true);
-      final session = MarketplaceScope.of(context).session;
-      final result = await session.signUpWithEmailPassword(
+      final result = await sessionCtrl.signUpWithEmailPassword(
         email: _email.text.trim(),
         password: _password.text,
       );
@@ -347,12 +347,27 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
         case SignUpResult.success:
           break;
         case SignUpResult.emailAlreadyRegistered:
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text(
-                'This email is already in use. Sign in from the login screen, '
-                'or use the password for this email.',
+          await showDialog<void>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Email already exists'),
+              content: const Text(
+                'An account with this email already exists. Please sign in instead.',
               ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('Use different email'),
+                ),
+                FilledButton(
+                  onPressed: () {
+                    Navigator.of(ctx).pop();
+                    // Avoid using BuildContext across async gaps.
+                    unawaited(sessionCtrl.goBackToLogin());
+                  },
+                  child: const Text('Go to login'),
+                ),
+              ],
             ),
           );
           return;
@@ -382,7 +397,7 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
         _step += 1;
       });
       if (completed == 0) {
-        await MarketplaceScope.of(context).session.markOnboardingAccountStepFinished();
+        await sessionCtrl.markOnboardingAccountStepFinished();
       }
     } else {
       await _submitBusinessResponsesToSupabase();
@@ -553,7 +568,6 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
   Future<void> _pickBusinessDoc({
     required String documentType,
     required void Function(String label, String? storagePath) apply,
-    required String demoFilename,
   }) async {
     if (_businessKycBusy) return;
     final file = await pickKycDocumentFile();
@@ -563,10 +577,6 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
         SnackBar(
           content: const Text(
             'No file selected. Picker may be unavailable on this device.',
-          ),
-          action: SnackBarAction(
-            label: 'Use demo',
-            onPressed: () => apply(demoFilename, null),
           ),
         ),
       );
@@ -603,36 +613,6 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
     } finally {
       if (mounted) setState(() => _businessKycBusy = false);
     }
-  }
-
-  /// Pre-fills only the documents required for the currently-selected
-  /// business kind so users can advance through the demo without an actual
-  /// file picker.
-  void _useDemoDocuments() {
-    setState(() {
-      _mayorPermitFile = 'demo_mayors_permit.pdf';
-      _mayorPermitStoragePath = null;
-      switch (_kind) {
-        case _BusinessKind.soleProprietorship:
-          _dtiCertFile = 'demo_dti_certificate.pdf';
-          _dtiCertStoragePath = null;
-          _ownerGovIdFile = 'demo_owner_government_id.jpg';
-          _ownerGovIdStoragePath = null;
-        case _BusinessKind.partnership:
-          _articlesOfPartnershipFile = 'demo_articles_of_partnership.pdf';
-          _articlesOfPartnershipStoragePath = null;
-        case _BusinessKind.corporation:
-          _secCertOfIncorporationFile = 'demo_sec_certificate.pdf';
-          _secCertOfIncorporationStoragePath = null;
-          _secretaryCertFile = 'demo_secretarys_certificate.pdf';
-          _secretaryCertStoragePath = null;
-      }
-    });
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Demo documents applied — you can continue.'),
-      ),
-    );
   }
 
   @override
@@ -787,7 +767,6 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
           ownerGovIdFile: _ownerGovIdFile,
           onPickDtiCert: () => _pickBusinessDoc(
             documentType: 'dti_certificate',
-            demoFilename: 'demo_dti_certificate.pdf',
             apply: (label, path) => setState(() {
               _dtiCertFile = label;
               _dtiCertStoragePath = path;
@@ -795,7 +774,6 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
           ),
           onPickOwnerGovId: () => _pickBusinessDoc(
             documentType: 'owner_government_id',
-            demoFilename: 'demo_owner_government_id.jpg',
             apply: (label, path) => setState(() {
               _ownerGovIdFile = label;
               _ownerGovIdStoragePath = path;
@@ -807,7 +785,6 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
           articlesOfPartnershipFile: _articlesOfPartnershipFile,
           onPickArticlesOfPartnership: () => _pickBusinessDoc(
             documentType: 'articles_of_partnership',
-            demoFilename: 'demo_articles_of_partnership.pdf',
             apply: (label, path) => setState(() {
               _articlesOfPartnershipFile = label;
               _articlesOfPartnershipStoragePath = path;
@@ -821,7 +798,6 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
           secretaryCertFile: _secretaryCertFile,
           onPickSecCertOfIncorporation: () => _pickBusinessDoc(
             documentType: 'sec_certificate',
-            demoFilename: 'demo_sec_certificate.pdf',
             apply: (label, path) => setState(() {
               _secCertOfIncorporationFile = label;
               _secCertOfIncorporationStoragePath = path;
@@ -829,7 +805,6 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
           ),
           onPickSecretaryCert: () => _pickBusinessDoc(
             documentType: 'secretary_certificate',
-            demoFilename: 'demo_secretarys_certificate.pdf',
             apply: (label, path) => setState(() {
               _secretaryCertFile = label;
               _secretaryCertStoragePath = path;
@@ -839,13 +814,11 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
           mayorPermitFile: _mayorPermitFile,
           onPickMayorPermit: () => _pickBusinessDoc(
             documentType: 'mayor_permit',
-            demoFilename: 'demo_mayors_permit.pdf',
             apply: (label, path) => setState(() {
               _mayorPermitFile = label;
               _mayorPermitStoragePath = path;
             }),
           ),
-          onUseDemoDocs: _useDemoDocuments,
           onChanged: () => setState(() {}),
         );
       case 3:
@@ -1238,7 +1211,6 @@ class _BusinessDetailsStep extends StatelessWidget {
     required this.onPickSecretaryCert,
     required this.mayorPermitFile,
     required this.onPickMayorPermit,
-    required this.onUseDemoDocs,
     required this.onChanged,
   });
 
@@ -1273,7 +1245,6 @@ class _BusinessDetailsStep extends StatelessWidget {
   final String? mayorPermitFile;
   final VoidCallback onPickMayorPermit;
 
-  final VoidCallback onUseDemoDocs;
   final VoidCallback onChanged;
 
   @override
@@ -1290,39 +1261,6 @@ class _BusinessDetailsStep extends StatelessWidget {
           ),
           const SizedBox(height: 18),
           ..._fieldsForKind(),
-          const SizedBox(height: 14),
-          InkWell(
-            borderRadius: BorderRadius.circular(12),
-            onTap: onUseDemoDocs,
-            child: Container(
-              padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
-              decoration: BoxDecoration(
-                color: _mintBg,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: _mintSoft),
-              ),
-              child: Row(
-                children: [
-                  const Icon(
-                    Icons.check_box_rounded,
-                    color: _brandGreenDark,
-                    size: 18,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Demo mode: tap to simulate uploading every required document',
-                      style: GoogleFonts.inter(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w700,
-                        color: _brandGreenDark,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
         ],
       ),
     );
@@ -2036,7 +1974,7 @@ class _ApplicationSubmittedView extends StatelessWidget {
                         border: Border.all(color: const Color(0xFFFCD9A0)),
                       ),
                       child: Text(
-                        'Demo: Account will be auto-approved in a few seconds for demonstration purposes.',
+                        'Please keep the app open while we review your submitted documents.',
                         textAlign: TextAlign.center,
                         style: GoogleFonts.inter(
                           fontSize: 12.5,

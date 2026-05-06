@@ -75,8 +75,6 @@ class SessionGate extends StatelessWidget {
               return VerificationStatusScreen(
                 status: status,
                 onReset: session.resetAll,
-                onDemoMarkVerified: () =>
-                    session.setAccountStatus(AccountStatus.verified),
               );
             }
             final marketplace = MarketplaceScope.of(context);

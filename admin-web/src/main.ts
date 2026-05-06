@@ -54,6 +54,18 @@ function isPlaceholderSupabaseEnv(projectUrl: string, key: string): boolean {
 
 const supabaseConfigured = Boolean(url && anonKey && !isPlaceholderSupabaseEnv(url, anonKey));
 
+function supabaseConfigDebugHtml(): string {
+  const safeUrl = url ? escapeHtml(url) : '<em>(empty)</em>';
+  const keyPrefix = anonKey ? escapeHtml(`${anonKey.slice(0, 12)}…`) : '<em>(empty)</em>';
+  const placeholder = isPlaceholderSupabaseEnv(url, anonKey) ? 'yes' : 'no';
+  return `<div class="muted" style="margin-top:10px;font-size:0.85em;line-height:1.35">
+    <div><strong>Detected</strong></div>
+    <div>URL: <code>${safeUrl}</code></div>
+    <div>Anon key: <code>${keyPrefix}</code></div>
+    <div>Placeholder: <code>${placeholder}</code></div>
+  </div>`;
+}
+
 let supabase: SupabaseClient | null = null;
 if (supabaseConfigured) {
   supabase = createClient(url, anonKey);
@@ -632,7 +644,7 @@ function renderLogin(): void {
         <p class="sub">Sign in with your admin account. Use a dedicated staff email — not a worker or business app login.</p>
         ${
           !supabaseConfigured
-            ? `<div class="error">Set real values for <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> in <code>admin-web/.env</code> (Supabase Dashboard → Settings → API — same as the Flutter app’s <code>assets/supabase.env</code>). Replace placeholders like <code>your_project</code>. Then restart <code>npm run dev</code>.</div>`
+            ? `<div class="error">Set real values for <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> in <code>admin-web/.env</code> (Supabase Dashboard → Settings → API — same as the Flutter app’s <code>assets/supabase.env</code>). Use the project root URL like <code>https://xxx.supabase.co</code> (not <code>/rest/v1</code>). Then restart <code>npm run dev</code>.${supabaseConfigDebugHtml()}</div>`
             : `
         <form id="login-form">
           <div class="field">
