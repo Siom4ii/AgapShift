@@ -174,6 +174,20 @@ class SessionController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Clears the local session when the signed-in user is platform staff (`admin`).
+  /// Staff accounts are for the web admin only, not the worker/business mobile app.
+  Future<void> _ejectStaffAdminFromMobile() async {
+    try {
+      await Supabase.instance.client.auth.signOut();
+    } catch (_) {}
+    await _store.remove(_kEmail);
+    await _store.remove(_kRole);
+    await _store.remove(_kOnboardingDone);
+    await _store.remove(_kAccountStatus);
+    await _store.remove(_kIdentitySnapshotJson);
+    await _store.remove(_kRegistrationRoleFirst);
+  }
+
   /// Pulls `public.profiles` into local KV (remote role/status; onboarding only
   /// flips to done when the server says so).
   Future<void> _mergeProfileRowIntoKv() async {
@@ -189,6 +203,10 @@ class SessionController extends ChangeNotifier {
       if (row == null) return;
 
       final role = row['role'] as String?;
+      if (role == 'admin') {
+        await _ejectStaffAdminFromMobile();
+        return;
+      }
       if (role == 'worker') {
         await _store.setString(_kRole, 'worker');
       } else if (role == 'business') {
@@ -227,7 +245,10 @@ class SessionController extends ChangeNotifier {
         'updated_at': DateTime.now().toUtc().toIso8601String(),
         'onboarding_done': onboardingDone,
       };
-      if (roleRaw == 'worker' || roleRaw == 'business') {
+      // Do not persist role until onboarding finishes — otherwise incomplete
+      // sign-ups appear in worker directory RPCs as `role = worker`.
+      if (onboardingDone &&
+          (roleRaw == 'worker' || roleRaw == 'business')) {
         payload['role'] = roleRaw;
       }
       if (statusRaw != null && statusRaw.isNotEmpty) {
@@ -356,6 +377,9 @@ class SessionController extends ChangeNotifier {
       }
 
       await _persistSessionAfterAuth(email.trim().toLowerCase());
+      if (Supabase.instance.client.auth.currentSession == null) {
+        return LoginResult.staffUseWebAdmin;
+      }
       return LoginResult.success;
     }
 

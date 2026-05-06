@@ -7,9 +7,7 @@ import '../../../payments/payments_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../theme/agap_colors.dart';
-import '../../widgets/locked_action.dart';
 import '../../widgets/shell_screen_polish.dart';
-import '../../widgets/success_feedback.dart';
 
 class WalletScreen extends StatefulWidget {
   const WalletScreen({
@@ -62,38 +60,6 @@ class _WalletScreenState extends State<WalletScreen> {
     }
   }
 
-  Future<void> _withdraw() async {
-    if (!canPerformVerifiedAction(widget.session)) {
-      await showLockedFeatureDialog(
-        context,
-        session: widget.session,
-        featureName: 'Withdrawals',
-      );
-      return;
-    }
-    final userId = appActorId(widget.session, mockFallback: '');
-    final amount = await _showWithdrawSheet(
-      context,
-      availableCentavos: _wallet?.available.amount ?? 0,
-    );
-    if (amount == null) return;
-    try {
-      await widget.payments.requestWithdrawal(
-        userId: userId,
-        amount: Money(amount: amount),
-      );
-      if (!mounted) return;
-      await _load();
-      if (!mounted) return;
-      showSuccessSnackBar(context, 'Withdrawal request submitted');
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Cannot withdraw: $e')));
-    }
-  }
-
   String _peso(int centavos) {
     final v = (centavos / 100).toStringAsFixed(2);
     return '₱ $v';
@@ -134,14 +100,31 @@ class _WalletScreenState extends State<WalletScreen> {
                   pendingLabel: wallet.pending.amount > 0
                       ? '+ ${_peso(wallet.pending.amount)} pending release'
                       : null,
-                  onWithdraw: wallet.available.amount > 0 ? _withdraw : null,
+                  onWithdraw: null,
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 0),
+                  child: Text(
+                    'Job wages are paid directly by your employer outside Nexora. '
+                    'This balance is for future in-app purchases only.',
+                    style: GoogleFonts.inter(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                      height: 1.35,
+                      color: AgapColors.textMuted,
+                    ),
+                  ),
                 ),
                 const SizedBox(height: 14),
                 Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 20),
                   child: _AccountPillsRow(
                     onAdd: () => ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Add account (demo)')),
+                      const SnackBar(
+                        content: Text(
+                          'Bank and e-wallet linking is not available. Pay is handled off-app.',
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -792,284 +775,6 @@ class _TxList extends StatelessWidget {
             ),
           ),
       ],
-    );
-  }
-}
-
-Future<int?> _showWithdrawSheet(
-  BuildContext context, {
-  required int availableCentavos,
-}) async {
-  final controller = TextEditingController();
-  int selected = 0; // 0=GCash, 1=Maya, 2=Bank
-  int? amountCentavos;
-
-  String peso(int c) => '₱${(c / 100).toStringAsFixed(2)}';
-
-  return showModalBottomSheet<int>(
-    context: context,
-    isScrollControlled: true,
-    showDragHandle: true,
-    backgroundColor: Colors.white,
-    builder: (ctx) {
-      return StatefulBuilder(
-        builder: (ctx, setModal) {
-          void setQuick(int php) {
-            amountCentavos = php * 100;
-            controller.text = php.toStringAsFixed(0);
-            setModal(() {});
-          }
-
-          int parsed() {
-            final v = double.tryParse(controller.text.trim());
-            if (v == null) return 0;
-            return (v * 100).round();
-          }
-
-          final entered = amountCentavos ?? parsed();
-          final can = entered > 0 && entered <= availableCentavos;
-          final bottom = MediaQuery.viewInsetsOf(ctx).bottom;
-
-          Widget methodTab(String label, int i) {
-            final s = selected == i;
-            return Expanded(
-              child: InkWell(
-                onTap: () => setModal(() => selected = i),
-                borderRadius: BorderRadius.circular(999),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(vertical: 10),
-                  decoration: BoxDecoration(
-                    color: s
-                        ? const Color(0xFFF3E8FF)
-                        : const Color(0xFFF3F4F6),
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(
-                      color: s
-                          ? const Color(0xFF7C3AED)
-                          : const Color(0xFFE5E7EB),
-                    ),
-                  ),
-                  child: Center(
-                    child: Text(
-                      label,
-                      style: GoogleFonts.inter(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w800,
-                        color: s
-                            ? const Color(0xFF6D28D9)
-                            : AgapColors.textMuted,
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            );
-          }
-
-          return Padding(
-            padding: EdgeInsets.fromLTRB(20, 6, 20, bottom + 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        'Withdraw Funds',
-                        style: GoogleFonts.inter(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.of(ctx).pop(),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 10),
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF5F3FF),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFE9D5FF)),
-                  ),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'Available Balance',
-                              style: GoogleFonts.inter(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
-                                color: const Color(0xFF6D28D9),
-                              ),
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              peso(availableCentavos),
-                              style: GoogleFonts.inter(
-                                fontSize: 22,
-                                fontWeight: FontWeight.w900,
-                                color: const Color(0xFF6D28D9),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  'Withdraw to',
-                  style: GoogleFonts.inter(fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 10),
-                Row(
-                  children: [
-                    methodTab('GCash', 0),
-                    const SizedBox(width: 10),
-                    methodTab('Maya', 1),
-                    const SizedBox(width: 10),
-                    methodTab('Bank', 2),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                Text(
-                  'Amount',
-                  style: GoogleFonts.inter(fontWeight: FontWeight.w800),
-                ),
-                const SizedBox(height: 10),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF3F4F6),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFE5E7EB)),
-                  ),
-                  child: TextField(
-                    controller: controller,
-                    keyboardType: TextInputType.number,
-                    decoration: InputDecoration(
-                      border: InputBorder.none,
-                      prefixText: '₱ ',
-                      hintText: '0.00',
-                      hintStyle: GoogleFonts.inter(color: AgapColors.textMuted),
-                    ),
-                    style: GoogleFonts.inter(
-                      fontWeight: FontWeight.w800,
-                      fontSize: 16,
-                    ),
-                    onChanged: (_) => setModal(() => amountCentavos = null),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: _QuickAmount(
-                        label: '₱500',
-                        onTap: () => setQuick(500),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _QuickAmount(
-                        label: '₱1000',
-                        onTap: () => setQuick(1000),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: _QuickAmount(
-                        label: '₱2000',
-                        onTap: () => setQuick(2000),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 14),
-                SizedBox(
-                  height: 52,
-                  child: FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: can
-                          ? const Color(0xFF6D28D9)
-                          : AgapColors.textMuted.withValues(alpha: 0.35),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(14),
-                      ),
-                    ),
-                    onPressed: can
-                        ? () {
-                            Navigator.of(ctx).pop(entered);
-                          }
-                        : null,
-                    child: Text(
-                      'Withdraw Now',
-                      style: GoogleFonts.inter(fontWeight: FontWeight.w900),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  selected == 0
-                      ? 'Funds will be sent to your GCash account (demo).'
-                      : selected == 1
-                      ? 'Funds will be sent to your Maya wallet (demo).'
-                      : 'Funds will be sent to your bank account (demo).',
-                  textAlign: TextAlign.center,
-                  style: GoogleFonts.inter(
-                    fontSize: 12,
-                    color: AgapColors.textMuted,
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
-      );
-    },
-  );
-}
-
-class _QuickAmount extends StatelessWidget {
-  const _QuickAmount({required this.label, required this.onTap});
-  final String label;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: const Color(0xFFF3F4F6),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE5E7EB)),
-        ),
-        child: Center(
-          child: Text(
-            label,
-            style: GoogleFonts.inter(
-              fontWeight: FontWeight.w800,
-              color: const Color(0xFF111827),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

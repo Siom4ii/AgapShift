@@ -103,7 +103,12 @@ Future<List<DiscoverableWorker>> loadDiscoverableWorkers({
     gigs: gigs,
     businessGigIds: myGigIds,
   );
+  var allowedFromApps = fromApps.keys.toSet();
+  if (SupabaseConfig.isConfigured && allowedFromApps.isNotEmpty) {
+    allowedFromApps = await _filterDirectoryEligibleWorkerIds(allowedFromApps);
+  }
   for (final e in fromApps.entries) {
+    if (!allowedFromApps.contains(e.key)) continue;
     identities.putIfAbsent(e.key, () => e.value);
   }
 
@@ -255,6 +260,34 @@ Future<GeoPoint> _resolveRefCenter() async {
   return DavaoDelSurScope.defaultCenter;
 }
 
+/// Subset of [ids] that may appear in Find Workers (finished onboarding).
+Future<Set<String>> _filterDirectoryEligibleWorkerIds(Set<String> ids) async {
+  if (ids.isEmpty) return {};
+  try {
+    final list = ids.toList();
+    final out = <String>{};
+    const chunk = 100;
+    for (var i = 0; i < list.length; i += chunk) {
+      final end = (i + chunk > list.length) ? list.length : i + chunk;
+      final part = list.sublist(i, end);
+      final rows = await Supabase.instance.client
+          .from('profiles')
+          .select('id')
+          .inFilter('id', part)
+          .eq('onboarding_done', true)
+          .eq('role', 'worker');
+      for (final raw in rows as List<dynamic>) {
+        if (raw is Map && raw['id'] != null) {
+          out.add(raw['id'].toString());
+        }
+      }
+    }
+    return out;
+  } catch (_) {
+    return {};
+  }
+}
+
 Future<({Map<String, WorkerIdentityDisplay?> identities, Map<String, bool> verified})>
     _fetchWorkerIdentitiesFromSupabase({
   String? excludeUserId,
@@ -286,7 +319,8 @@ Future<({Map<String, WorkerIdentityDisplay?> identities, Map<String, bool> verif
     final rows = await Supabase.instance.client
         .from('profiles')
         .select('id, identity_snapshot, account_status')
-        .eq('role', 'worker');
+        .eq('role', 'worker')
+        .eq('onboarding_done', true);
 
     final list = rows as List<dynamic>;
     for (final raw in list) {
@@ -305,7 +339,8 @@ Future<({Map<String, WorkerIdentityDisplay?> identities, Map<String, bool> verif
 /// gigs** (always), plus anyone who applied to gigs pinned inside Davao del Sur
 /// (regional discovery). Without the business-gig branch, workers who applied
 /// only to your jobs but whose gig pin falls outside the polygon—or who have
-/// not yet got `profiles.role = 'worker'` synced—would disappear from Find Workers.
+/// not yet got `profiles.role = 'worker'` + `onboarding_done` synced—would
+/// disappear from Find Workers until registration finishes.
 Map<String, WorkerIdentityDisplay?> _workerIdentitiesFromApplications({
   required List<GigApplication> apps,
   required List<Gig> gigs,

@@ -69,6 +69,18 @@ class _LoginScreenState extends State<LoginScreen> {
     switch (result) {
       case LoginResult.success:
         break;
+      case LoginResult.staffUseWebAdmin:
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            content: Text(
+              'This is a staff admin account. Sign in on the Nexora admin website, not in this app.',
+              style: GoogleFonts.inter(fontWeight: FontWeight.w600),
+            ),
+          ),
+        );
       case LoginResult.notFound:
         await _showNoAccountAlert();
       case LoginResult.invalidCredentials:

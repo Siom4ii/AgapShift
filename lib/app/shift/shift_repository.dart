@@ -11,11 +11,12 @@ typedef ShiftAttendanceScanResult = ({
 ///
 /// Workers show a QR; the **employer** scans it to record attendance.
 abstract class ShiftRepository {
-  /// Signed token for the worker to display (includes [workerId] and scan type).
+  /// Signed token for the worker to display (includes [workerId], scan type, [workDay]).
   String createWorkerAttendanceQr({
     required String gigId,
     required String workerId,
     required AttendanceScanType type,
+    required DateTime workDay,
   });
 
   Future<ShiftSession?> getSessionForGig(String gigId);
@@ -23,6 +24,12 @@ abstract class ShiftRepository {
   Future<List<ShiftSession>> listShiftSessions();
 
   Future<List<AttendanceRecord>> listAttendanceForGig(String gigId);
+
+  /// Per-day attendance for the hired worker (clock-in / clock-out per calendar day).
+  Future<List<ShiftDaySummary>> listWorkDaySummaries({
+    required String gigId,
+    required String workerId,
+  });
 
   /// Parse [qrToken], verify the gig belongs to [businessId], then record attendance.
   Future<ShiftAttendanceScanResult> scanWorkerAttendanceQr({

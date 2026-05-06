@@ -649,13 +649,15 @@ class _WorkerDetailSheetPanel extends StatelessWidget {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
-              child: Stack(
-                alignment: Alignment.center,
-                clipBehavior: Clip.none,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Container(
+              // Stack was only as tall as the drag pill; the close IconButton
+              // overflowed downward and overlapped the verified badge row.
+              child: SizedBox(
+                height: 48,
+                child: Stack(
+                  alignment: Alignment.center,
+                  clipBehavior: Clip.none,
+                  children: [
+                    Container(
                       width: 40,
                       height: 4,
                       decoration: BoxDecoration(
@@ -663,21 +665,21 @@ class _WorkerDetailSheetPanel extends StatelessWidget {
                         borderRadius: BorderRadius.circular(999),
                       ),
                     ),
-                  ),
-                  Positioned(
-                    right: 0,
-                    top: 0,
-                    child: IconButton(
-                      onPressed: onClose,
-                      icon: const Icon(Icons.close_rounded),
-                      color: const Color(0xFF6B7280),
-                      style: IconButton.styleFrom(
-                        backgroundColor: const Color(0xFFF3F4F6),
-                        padding: const EdgeInsets.all(8),
+                    Positioned(
+                      right: 0,
+                      top: 0,
+                      child: IconButton(
+                        onPressed: onClose,
+                        icon: const Icon(Icons.close_rounded),
+                        color: const Color(0xFF6B7280),
+                        style: IconButton.styleFrom(
+                          backgroundColor: const Color(0xFFF3F4F6),
+                          padding: const EdgeInsets.all(8),
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
             Padding(

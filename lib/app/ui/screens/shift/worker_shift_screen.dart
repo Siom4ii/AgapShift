@@ -9,11 +9,11 @@ import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
 import '../../../marketplace/marketplace_repository.dart';
 import '../../../marketplace/marketplace_scope.dart';
-import '../../../payments/payments_repository.dart';
 import '../../../location/user_geo_point.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../../location/davao_del_sur_scope.dart';
+import '../../../profile/worker_display_names.dart';
 import '../../../shift/shift_repository.dart';
 import '../../theme/agap_colors.dart';
 import '../../widgets/shell_screen_polish.dart';
@@ -24,14 +24,12 @@ class WorkerShiftScreen extends StatefulWidget {
     super.key,
     required this.marketRepo,
     required this.shiftRepo,
-    required this.payments,
     required this.session,
     this.showAppBar = true,
   });
 
   final MarketplaceRepository marketRepo;
   final ShiftRepository shiftRepo;
-  final PaymentsRepository payments;
   final SessionController session;
   final bool showAppBar;
 
@@ -45,11 +43,15 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
   Gig? _gig;
   /// True when this gig is only an application — worker is not hired yet (no QR).
   bool _isAwaitingHire = false;
-  List<AttendanceRecord> _attendance = const [];
+  List<ShiftDaySummary> _daySummaries = const [];
+  /// Local calendar day selected for QR & summary (start of day).
+  DateTime? _selectedWorkDayLocal;
   GeoPoint _distanceAnchor = DavaoDelSurScope.defaultCenter;
   /// Cached worker attendance QR (regenerated periodically so it stays valid).
   String _attendanceQrPayload = '';
   String? _ratingPromptedForGigId;
+  /// Employer display + gig category (under job title). Never raw UUIDs.
+  String _employerLine = '';
 
   Timer? _timer;
   Timer? _qrRegenTimer;
@@ -76,13 +78,65 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
     super.dispose();
   }
 
+  List<DateTime> _gigCalendarDays(Gig g) {
+    final s = g.startAt.toLocal();
+    final e = g.endAt.toLocal();
+    var cur = DateTime(s.year, s.month, s.day);
+    final end = DateTime(e.year, e.month, e.day);
+    final out = <DateTime>[];
+    while (!cur.isAfter(end)) {
+      out.add(cur);
+      cur = cur.add(const Duration(days: 1));
+    }
+    return out;
+  }
+
+  String _ymdLocal(DateTime d) {
+    final l = d.toLocal();
+    return '${l.year}-${l.month.toString().padLeft(2, '0')}-${l.day.toString().padLeft(2, '0')}';
+  }
+
+  ShiftDaySummary? _summaryForDay(DateTime localDay, [List<ShiftDaySummary>? rows]) {
+    final list = rows ?? _daySummaries;
+    final key = _ymdLocal(localDay);
+    for (final s in list) {
+      if (_ymdLocal(s.workDay) == key) return s;
+    }
+    return null;
+  }
+
+  bool _shiftFullyCheckedOut(Gig gig, List<ShiftDaySummary> summaries) {
+    final span = _gigCalendarDays(gig);
+    if (span.isEmpty) return false;
+    for (final d in span) {
+      if (_summaryForDay(d, summaries)?.checkOut == null) return false;
+    }
+    return true;
+  }
+
+  String _shortDateLabel(DateTime localDay) {
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+    ];
+    final l = localDay.toLocal();
+    return '${months[l.month - 1]} ${l.day}';
+  }
+
   void _regenAttendanceQrIfNeeded() {
     final gig = _gig;
     final workerId = appActorId(widget.session, mockFallback: '');
-    if (gig == null || workerId.isEmpty || _isAwaitingHire) return;
+    final day = _selectedWorkDayLocal;
+    if (gig == null || workerId.isEmpty || _isAwaitingHire || day == null) {
+      if (_attendanceQrPayload.isNotEmpty) {
+        setState(() => _attendanceQrPayload = '');
+      }
+      return;
+    }
 
-    final checkIn = _checkInAt;
-    final checkOut = _checkOutAt;
+    final sum = _summaryForDay(day);
+    final checkIn = sum?.checkIn?.toLocal();
+    final checkOut = sum?.checkOut?.toLocal();
     final canCheckIn = checkIn == null;
     final canCheckOut = checkIn != null && checkOut == null;
     if (!canCheckIn && !canCheckOut) {
@@ -99,6 +153,7 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
         gigId: gig.id,
         workerId: workerId,
         type: type,
+        workDay: day,
       );
     });
   }
@@ -165,19 +220,40 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
         }
       }
 
-      final attendance = selected == null || awaitingHire
-          ? <AttendanceRecord>[]
-          : await widget.shiftRepo.listAttendanceForGig(selected.id);
+      List<ShiftDaySummary> summaries = const [];
+      DateTime? selectedDay;
+      if (selected != null && !awaitingHire && workerId.isNotEmpty) {
+        summaries = await widget.shiftRepo.listWorkDaySummaries(
+          gigId: selected.id,
+          workerId: workerId,
+        );
+        final span = _gigCalendarDays(selected);
+        if (span.isNotEmpty) {
+          final now = DateTime.now();
+          final today = DateTime(now.year, now.month, now.day);
+          selectedDay = span.firstWhere(
+            (d) => _ymdLocal(d) == _ymdLocal(today),
+            orElse: () => span.first,
+          );
+        }
+      }
+
+      var employerLine = '';
+      if (selected != null) {
+        employerLine = await _employerSubtitleForGig(selected);
+      }
+
       if (!mounted) return;
       setState(() {
         _distanceAnchor = userPt ?? DavaoDelSurScope.defaultCenter;
         _gig = selected;
         _isAwaitingHire = awaitingHire;
-        _attendance = attendance;
+        _daySummaries = summaries;
+        _selectedWorkDayLocal = selectedDay;
+        _employerLine = employerLine;
       });
       _regenAttendanceQrIfNeeded();
-      await _tryReleaseEscrowIfCheckedOut();
-      await _maybePromptRatingAfterCheckout();
+      await _maybePromptRatingAfterShiftComplete();
     } catch (e) {
       if (!mounted) return;
       setState(() => _error = '$e');
@@ -186,54 +262,27 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
     }
   }
 
-  DateTime? get _checkInAt {
-    final workerId = appActorId(widget.session, mockFallback: '');
-    final a = _attendance
-        .where(
-          (r) => r.workerId == workerId && r.type == AttendanceScanType.checkIn,
-        )
-        .toList();
-    if (a.isEmpty) return null;
-    a.sort((x, y) => x.scannedAt.compareTo(y.scannedAt));
-    return a.first.scannedAt.toLocal();
+  Future<String> _employerSubtitleForGig(Gig g) async {
+    final bizName = await _fetchBusinessDisplayName(g.businessId);
+    final cat = g.category.trim();
+    if (cat.isNotEmpty) return '$bizName · $cat';
+    return bizName;
   }
 
-  DateTime? get _checkOutAt {
-    final workerId = appActorId(widget.session, mockFallback: '');
-    final a = _attendance
-        .where(
-          (r) =>
-              r.workerId == workerId && r.type == AttendanceScanType.checkOut,
-        )
-        .toList();
-    if (a.isEmpty) return null;
-    a.sort((x, y) => x.scannedAt.compareTo(y.scannedAt));
-    return a.first.scannedAt.toLocal();
+  Future<String> _fetchBusinessDisplayName(String businessId) async {
+    if (businessId.isEmpty) return 'Business';
+    final m = await fetchWorkerDisplayNamesById({businessId});
+    final n = m[businessId]?.trim();
+    if (n != null && n.isNotEmpty) return n;
+    return 'Business';
   }
 
-  Future<void> _tryReleaseEscrowIfCheckedOut() async {
-    final gig = _gig;
-    final workerId = appActorId(widget.session, mockFallback: '');
-    if (gig == null || workerId.isEmpty || _checkOutAt == null) return;
-    try {
-      final hired = await widget.marketRepo.getHiredWorkerId(gig.id);
-      if (hired != workerId) return;
-      final funded = await widget.payments.isEscrowFunded(gig.id);
-      if (funded) {
-        await widget.payments.releaseEscrowToWorker(
-          gigId: gig.id,
-          workerId: workerId,
-        );
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _maybePromptRatingAfterCheckout() async {
+  Future<void> _maybePromptRatingAfterShiftComplete() async {
     final gig = _gig;
     final workerId = appActorId(widget.session, mockFallback: '');
     if (gig == null ||
         workerId.isEmpty ||
-        _checkOutAt == null ||
+        !_shiftFullyCheckedOut(gig, _daySummaries) ||
         _ratingPromptedForGigId == gig.id) {
       return;
     }
@@ -263,17 +312,25 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
   @override
   Widget build(BuildContext context) {
     final gig = _gig;
-    final checkIn = _checkInAt;
-    final checkOut = _checkOutAt;
-    final status = gig == null
-        ? 'No shift assigned'
-        : _isAwaitingHire
-            ? 'Application pending'
-            : checkOut != null
-                ? 'Completed'
-                : checkIn != null
-                    ? 'In progress'
-                    : 'Upcoming';
+    final selDay = _selectedWorkDayLocal;
+    final daySum =
+        gig != null && selDay != null ? _summaryForDay(selDay) : null;
+    final checkIn = daySum?.checkIn?.toLocal();
+    final checkOut = daySum?.checkOut?.toLocal();
+    final allDone =
+        gig != null && _shiftFullyCheckedOut(gig, _daySummaries);
+    final loadingNoGig = _loading && gig == null;
+    final status = loadingNoGig
+        ? 'Loading…'
+        : gig == null
+            ? 'No shift assigned'
+            : _isAwaitingHire
+                ? 'Application pending'
+                : allDone
+                    ? 'Completed'
+                    : _daySummaries.any((s) => s.checkIn != null)
+                        ? 'In progress'
+                        : 'Upcoming';
 
     final payPhp = gig == null ? 0 : (gig.pay.amount / 100.0).round();
     final distanceKm = gig == null
@@ -283,13 +340,22 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
             gig.location,
           );
 
-    final canCheckIn =
-        gig != null && !_isAwaitingHire && checkIn == null;
-    final canCheckOut =
-        gig != null && !_isAwaitingHire && checkIn != null && checkOut == null;
+    final canCheckIn = gig != null &&
+        !_isAwaitingHire &&
+        selDay != null &&
+        checkIn == null;
+    final canCheckOut = gig != null &&
+        !_isAwaitingHire &&
+        selDay != null &&
+        checkIn != null &&
+        checkOut == null;
     final showAttendanceQr =
         gig != null && !_isAwaitingHire && (canCheckIn || canCheckOut);
     final qrIsCheckOut = canCheckOut;
+    final spanDays = gig == null ? const <DateTime>[] : _gigCalendarDays(gig);
+    final multiDay = spanDays.length > 1;
+    final dayCtx =
+        multiDay && selDay != null ? _shortDateLabel(selDay) : null;
 
     final body = SafeArea(
       child: ShellChromeBackground(
@@ -345,13 +411,15 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
                               width: 8,
                               height: 8,
                               decoration: BoxDecoration(
-                                color: gig == null
-                                    ? const Color(0xFF9CA3AF)
-                                    : _isAwaitingHire || status == 'Upcoming'
-                                        ? const Color(0xFFF59E0B)
-                                        : status == 'In progress'
-                                            ? const Color(0xFF22C55E)
-                                            : const Color(0xFF6B7280),
+                                color: loadingNoGig
+                                    ? const Color(0xFF2563EB)
+                                    : gig == null
+                                        ? const Color(0xFF9CA3AF)
+                                        : _isAwaitingHire || status == 'Upcoming'
+                                            ? const Color(0xFFF59E0B)
+                                            : status == 'In progress'
+                                                ? const Color(0xFF22C55E)
+                                                : const Color(0xFF6B7280),
                                 shape: BoxShape.circle,
                               ),
                             ),
@@ -369,7 +437,7 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
                       ],
                     ),
                   ),
-                  if (_loading)
+                  if (_loading && gig != null)
                     const SizedBox(
                       width: 20,
                       height: 20,
@@ -383,16 +451,19 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
                   padding: const EdgeInsets.only(bottom: 12),
                   child: _InlineError(message: _error!, onRetry: _load),
                 ),
-              if (gig == null)
+              if (loadingNoGig)
+                const _LoadingShiftCard()
+              else if (gig == null)
                 _EmptyShiftCard(now: _now)
               else
                 _ShiftSummaryCard(
                   title: gig.title,
-                  company: _companyFromBusinessId(gig.businessId),
+                  company: _employerLine.isNotEmpty ? _employerLine : 'Business',
                   payPhp: payPhp,
                   checkIn: checkIn,
                   checkOut: checkOut,
                   applicationPending: _isAwaitingHire,
+                  selectedDayLabel: dayCtx,
                 ),
               const SizedBox(height: 14),
               if (gig != null)
@@ -404,21 +475,48 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
                 const SizedBox(height: 14),
                 if (_isAwaitingHire)
                   _AwaitingHireNote()
-                else if (showAttendanceQr && _attendanceQrPayload.isNotEmpty) ...[
-                  _WorkerAttendanceQrCard(
-                    title: qrIsCheckOut
-                        ? 'Check-out — show employer'
-                        : 'Check-in — show employer',
-                    subtitle: qrIsCheckOut
-                        ? 'Your employer scans this to end your shift.'
-                        : 'Your employer scans this to start your shift.',
-                    payload: _attendanceQrPayload,
-                    onRefresh: () {
-                      setState(_regenAttendanceQrIfNeeded);
-                    },
+                else ...[
+                  if (multiDay)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: _WorkDayChipsRow(
+                        days: spanDays,
+                        selected: selDay,
+                        ymdLocal: _ymdLocal,
+                        labelFor: _shortDateLabel,
+                        onSelect: (d) {
+                          setState(() => _selectedWorkDayLocal = d);
+                          _regenAttendanceQrIfNeeded();
+                        },
+                      ),
+                    ),
+                  _DailyAttendanceSection(
+                    gig: gig,
+                    summaries: _daySummaries,
+                    ymdLocal: _ymdLocal,
+                    shortLabel: _shortDateLabel,
                   ),
                   const SizedBox(height: 12),
-                  _SecurityNote(),
+                  if (showAttendanceQr && _attendanceQrPayload.isNotEmpty) ...[
+                    _WorkerAttendanceQrCard(
+                      title: qrIsCheckOut
+                          ? 'Check-out — show employer'
+                          : 'Check-in — show employer',
+                      subtitle: qrIsCheckOut
+                          ? (multiDay
+                              ? 'Employer scans to clock you out for ${_shortDateLabel(selDay)}.'
+                              : 'Your employer scans this to end this workday.')
+                          : (multiDay
+                              ? 'Employer scans to clock you in for ${_shortDateLabel(selDay)}.'
+                              : 'Your employer scans this to start this workday.'),
+                      payload: _attendanceQrPayload,
+                      onRefresh: () {
+                        setState(_regenAttendanceQrIfNeeded);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    _SecurityNote(),
+                  ],
                 ],
               ],
               const SizedBox(height: 8),
@@ -442,6 +540,7 @@ class _ShiftSummaryCard extends StatelessWidget {
     required this.checkIn,
     required this.checkOut,
     this.applicationPending = false,
+    this.selectedDayLabel,
   });
 
   final String title;
@@ -450,6 +549,8 @@ class _ShiftSummaryCard extends StatelessWidget {
   final DateTime? checkIn;
   final DateTime? checkOut;
   final bool applicationPending;
+  /// When set, times are for this calendar workday (multi-day gigs).
+  final String? selectedDayLabel;
 
   @override
   Widget build(BuildContext context) {
@@ -489,7 +590,11 @@ class _ShiftSummaryCard extends StatelessWidget {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      applicationPending ? 'Applied gig' : 'Today\'s Shift',
+                      applicationPending
+                          ? 'Applied gig'
+                          : (selectedDayLabel != null
+                              ? 'Shift · $selectedDayLabel'
+                              : 'Today\'s Shift'),
                       style: GoogleFonts.inter(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
@@ -839,7 +944,8 @@ class _SecurityNote extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              'Your employer scans your code to clock you in and out. Refresh if the code expires.',
+              'Each workday needs its own check-in and check-out scan. Pick the day above, '
+              'then show this code. Refresh if it expires.',
               style: GoogleFonts.inter(
                 fontSize: 12.5,
                 height: 1.35,
@@ -848,6 +954,167 @@ class _SecurityNote extends StatelessWidget {
               ),
             ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _WorkDayChipsRow extends StatelessWidget {
+  const _WorkDayChipsRow({
+    required this.days,
+    required this.selected,
+    required this.ymdLocal,
+    required this.labelFor,
+    required this.onSelect,
+  });
+
+  final List<DateTime> days;
+  final DateTime? selected;
+  final String Function(DateTime) ymdLocal;
+  final String Function(DateTime) labelFor;
+  final void Function(DateTime) onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Workdays',
+          style: GoogleFonts.inter(
+            fontSize: 13,
+            fontWeight: FontWeight.w800,
+            color: const Color(0xFF111827),
+          ),
+        ),
+        const SizedBox(height: 8),
+        SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: [
+              for (final d in days) ...[
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: ChoiceChip(
+                    label: Text(
+                      labelFor(d),
+                      style: GoogleFonts.inter(fontWeight: FontWeight.w700),
+                    ),
+                    selected: selected != null && ymdLocal(d) == ymdLocal(selected!),
+                    onSelected: (_) => onSelect(d),
+                    selectedColor: const Color(0xFFDDD6FE),
+                    backgroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      side: BorderSide(
+                        color: AgapColors.borderSubtle.withValues(alpha: 0.9),
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DailyAttendanceSection extends StatelessWidget {
+  const _DailyAttendanceSection({
+    required this.gig,
+    required this.summaries,
+    required this.ymdLocal,
+    required this.shortLabel,
+  });
+
+  final Gig gig;
+  final List<ShiftDaySummary> summaries;
+  final String Function(DateTime) ymdLocal;
+  final String Function(DateTime) shortLabel;
+
+  String _t(DateTime? d) {
+    if (d == null) return '—';
+    final l = d.toLocal();
+    final h24 = l.hour;
+    final h = h24 > 12 ? h24 - 12 : (h24 == 0 ? 12 : h24);
+    final ap = h24 >= 12 ? 'PM' : 'AM';
+    final m = l.minute.toString().padLeft(2, '0');
+    return '$h:$m $ap';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = gig.startAt.toLocal();
+    final e = gig.endAt.toLocal();
+    var cur = DateTime(s.year, s.month, s.day);
+    final end = DateTime(e.year, e.month, e.day);
+    final span = <DateTime>[];
+    while (!cur.isAfter(end)) {
+      span.add(cur);
+      cur = cur.add(const Duration(days: 1));
+    }
+
+    ShiftDaySummary? forDay(DateTime d) {
+      final key = ymdLocal(d);
+      for (final x in summaries) {
+        if (ymdLocal(x.workDay) == key) return x;
+      }
+      return null;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AgapColors.borderSubtle.withValues(alpha: 0.9),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Attendance by day',
+            style: GoogleFonts.inter(
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+              color: const Color(0xFF111827),
+            ),
+          ),
+          const SizedBox(height: 10),
+          for (final d in span)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 72,
+                    child: Text(
+                      shortLabel(d),
+                      style: GoogleFonts.inter(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 13,
+                        color: const Color(0xFF475569),
+                      ),
+                    ),
+                  ),
+                  Expanded(
+                    child: Text(
+                      'In ${_t(forDay(d)?.checkIn)} · Out ${_t(forDay(d)?.checkOut)}',
+                      style: GoogleFonts.inter(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12.5,
+                        color: AgapColors.textMuted,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
         ],
       ),
     );
@@ -886,6 +1153,55 @@ class _InlineError extends StatelessWidget {
             child: Text(
               'Retry',
               style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LoadingShiftCard extends StatelessWidget {
+  const _LoadingShiftCard();
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 36, horizontal: 20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: AgapColors.borderSubtle.withValues(alpha: 0.9),
+        ),
+      ),
+      child: Column(
+        children: [
+          const SizedBox(
+            width: 36,
+            height: 36,
+            child: CircularProgressIndicator(strokeWidth: 3),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            'Loading your shift…',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.inter(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFF111827),
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Hang on while we fetch your schedule.',
+            textAlign: TextAlign.center,
+            style: GoogleFonts.inter(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: AgapColors.textMuted,
+              height: 1.35,
             ),
           ),
         ],
@@ -948,18 +1264,4 @@ double _distanceKm(GeoPoint a, GeoPoint b) {
   final dx = (a.lat - b.lat) * 111000.0;
   final dy = (a.lng - b.lng) * 111000.0;
   return (math.sqrt(dx * dx + dy * dy)) / 1000.0;
-}
-
-String _companyFromBusinessId(String id) {
-  if (id.isEmpty) return 'Verified Business';
-  final local = id.split('@').first;
-  final words = local
-      .split(RegExp(r'[._-]+'))
-      .where((w) => w.isNotEmpty)
-      .toList();
-  if (words.isEmpty) return 'Verified Business';
-  final titled = words
-      .map((w) => '${w[0].toUpperCase()}${w.length > 1 ? w.substring(1) : ''}')
-      .join(' ');
-  return '$titled Logistics';
 }

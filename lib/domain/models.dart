@@ -92,6 +92,7 @@ class Gig {
     required this.createdAt,
     this.workersNeeded,
     this.isUrgent = false,
+    this.boostedUntil,
   });
 
   final String id;
@@ -109,6 +110,14 @@ class Gig {
   /// Openings for this gig when set (Supabase `workers_needed`).
   final int? workersNeeded;
   final bool isUrgent;
+  /// Supabase `boosted_until` — when in the future, listing is boosted in feed.
+  final DateTime? boostedUntil;
+
+  bool get isBoostedActive {
+    final b = boostedUntil;
+    if (b == null) return false;
+    return b.isAfter(DateTime.now().toUtc());
+  }
 }
 
 class GigApplication {
@@ -145,6 +154,19 @@ class ShiftSession {
   final DateTime? checkOutAt;
 }
 
+/// One calendar day of attendance for a hired worker on a gig.
+class ShiftDaySummary {
+  const ShiftDaySummary({
+    required this.workDay,
+    this.checkIn,
+    this.checkOut,
+  });
+
+  final DateTime workDay;
+  final DateTime? checkIn;
+  final DateTime? checkOut;
+}
+
 class AttendanceRecord {
   const AttendanceRecord({
     required this.id,
@@ -152,6 +174,7 @@ class AttendanceRecord {
     required this.workerId,
     required this.type,
     required this.scannedAt,
+    this.workDay,
   });
 
   final String id;
@@ -159,6 +182,8 @@ class AttendanceRecord {
   final String workerId;
   final AttendanceScanType type;
   final DateTime scannedAt;
+  /// Calendar day this scan belongs to (multi-day shifts). Null for legacy rows.
+  final DateTime? workDay;
 }
 
 class Escrow {

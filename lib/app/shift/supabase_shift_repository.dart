@@ -3,14 +3,11 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../domain/enums.dart';
 import '../../domain/models.dart';
 import 'qr_tokens.dart';
+import 'shift_day_summary.dart';
 import 'shift_repository.dart';
 
 /// Postgres-backed shift sessions ([supabase/migrations/012_shift_lifecycle.sql]).
-///
-/// Inserts [shift_attendance] before upserting [shift_sessions] so RLS still
-/// sees the gig as `ongoing` when recording check-out.
-///
-/// Employers record scans via [scanWorkerAttendanceQr] ([017_shift_attendance_business_scan.sql]).
+/// Daily attendance: [019_revenue_model_no_escrow_daily_attendance.sql] `work_date`.
 class SupabaseShiftRepository implements ShiftRepository {
   SupabaseShiftRepository({SupabaseClient? client, QrTokenCodec? codec})
       : _client = client ?? Supabase.instance.client,
@@ -19,16 +16,22 @@ class SupabaseShiftRepository implements ShiftRepository {
   final SupabaseClient _client;
   final QrTokenCodec _codec;
 
+  static String _ymd(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
   @override
   String createWorkerAttendanceQr({
     required String gigId,
     required String workerId,
     required AttendanceScanType type,
+    required DateTime workDay,
   }) {
+    final day = DateTime(workDay.year, workDay.month, workDay.day);
     return _codec.createToken(
       gigId: gigId,
       workerId: workerId,
       type: type,
+      workDateYmd: _ymd(day),
       expiresAt: DateTime.now().toUtc().add(const Duration(minutes: 10)),
     );
   }
@@ -67,6 +70,15 @@ class SupabaseShiftRepository implements ShiftRepository {
   }
 
   @override
+  Future<List<ShiftDaySummary>> listWorkDaySummaries({
+    required String gigId,
+    required String workerId,
+  }) async {
+    final rows = await listAttendanceForGig(gigId);
+    return summarizeShiftDays(rows, workerId);
+  }
+
+  @override
   Future<ShiftAttendanceScanResult> scanWorkerAttendanceQr({
     required String qrToken,
     required String businessId,
@@ -79,6 +91,7 @@ class SupabaseShiftRepository implements ShiftRepository {
     final gigId = parsed.gigId!;
     final workerId = parsed.workerId!;
     final type = parsed.type!;
+    final workDateYmd = parsed.workDateYmd!;
 
     final gigRow = await _client
         .from('gigs')
@@ -98,8 +111,31 @@ class SupabaseShiftRepository implements ShiftRepository {
     }
 
     final attendance = await listAttendanceForGig(gigId);
-    final already = attendance.any((a) => a.workerId == workerId && a.type == type);
-    if (already) throw StateError('Already scanned ${type.name}');
+    bool sameDay(AttendanceRecord a, String ymd) {
+      final ad = a.workDay ??
+          DateTime(a.scannedAt.year, a.scannedAt.month, a.scannedAt.day);
+      return _ymd(ad) == ymd;
+    }
+
+    final dup = attendance.any(
+      (a) =>
+          a.workerId == workerId &&
+          a.type == type &&
+          sameDay(a, workDateYmd),
+    );
+    if (dup) throw StateError('Already scanned ${type.name} for this day');
+
+    if (type == AttendanceScanType.checkOut) {
+      final hasIn = attendance.any(
+        (a) =>
+            a.workerId == workerId &&
+            a.type == AttendanceScanType.checkIn &&
+            sameDay(a, workDateYmd),
+      );
+      if (!hasIn) {
+        throw StateError('Check in for this day before check out');
+      }
+    }
 
     final existingBefore = await _client
         .from('shift_sessions')
@@ -107,40 +143,41 @@ class SupabaseShiftRepository implements ShiftRepository {
         .eq('gig_id', gigId)
         .eq('worker_id', workerId)
         .maybeSingle();
-    if (type == AttendanceScanType.checkOut) {
-      final ci = existingBefore == null ? null : existingBefore['check_in_at'];
-      if (ci == null) {
-        throw StateError('Check in required before check out');
-      }
-    }
 
     await _client.from('shift_attendance').insert({
       'gig_id': gigId,
       'worker_id': workerId,
       'scan_type': type.name,
       'scanned_at': n.toUtc().toIso8601String(),
+      'work_date': workDateYmd,
     });
 
-    ShiftSession? existing;
-    if (existingBefore != null) {
-      existing = _sessionFromRow(Map<String, dynamic>.from(existingBefore));
+    final allForWorker = await _client
+        .from('shift_attendance')
+        .select()
+        .eq('gig_id', gigId)
+        .eq('worker_id', workerId)
+        .order('scanned_at');
+    final list = allForWorker as List<dynamic>;
+    DateTime? minCi;
+    DateTime? maxCo;
+    for (final e in list) {
+      final row = Map<String, dynamic>.from(e as Map);
+      final st = row['scan_type'] as String;
+      final at = DateTime.parse(row['scanned_at'] as String);
+      if (st == AttendanceScanType.checkIn.name) {
+        if (minCi == null || at.isBefore(minCi)) minCi = at;
+      } else {
+        if (maxCo == null || at.isAfter(maxCo)) maxCo = at;
+      }
     }
-
-    final merged = ShiftSession(
-      id: existing?.id ?? '',
-      gigId: gigId,
-      workerId: workerId,
-      businessId: businessId,
-      checkInAt: type == AttendanceScanType.checkIn ? n : existing?.checkInAt,
-      checkOutAt: type == AttendanceScanType.checkOut ? n : existing?.checkOutAt,
-    );
 
     final payload = <String, dynamic>{
       'gig_id': gigId,
       'worker_id': workerId,
       'business_id': businessId,
-      'check_in_at': merged.checkInAt?.toUtc().toIso8601String(),
-      'check_out_at': merged.checkOutAt?.toUtc().toIso8601String(),
+      'check_in_at': minCi?.toUtc().toIso8601String(),
+      'check_out_at': maxCo?.toUtc().toIso8601String(),
     };
 
     final row = await _client
@@ -169,6 +206,14 @@ class SupabaseShiftRepository implements ShiftRepository {
   }
 
   AttendanceRecord _attendanceFromRow(Map<String, dynamic> row) {
+    final wd = row['work_date'];
+    DateTime? workDay;
+    if (wd != null) {
+      final s = wd.toString();
+      if (s.length >= 10) {
+        workDay = DateTime.parse('${s.substring(0, 10)}T12:00:00.000Z');
+      }
+    }
     return AttendanceRecord(
       id: row['id'] as String,
       gigId: row['gig_id'] as String,
@@ -176,6 +221,7 @@ class SupabaseShiftRepository implements ShiftRepository {
       type: AttendanceScanType.values
           .firstWhere((e) => e.name == row['scan_type'] as String),
       scannedAt: DateTime.parse(row['scanned_at'] as String),
+      workDay: workDay,
     );
   }
 }

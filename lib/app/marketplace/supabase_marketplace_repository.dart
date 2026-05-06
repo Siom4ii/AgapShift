@@ -37,6 +37,7 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
     required String category,
     int? workersNeeded,
     bool isUrgent = false,
+    DateTime? boostedUntil,
   }) async {
     if (!DavaoDelSurScope.contains(location)) {
       throw ArgumentError(
@@ -60,6 +61,9 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
     };
     if (workersNeeded != null) {
       payload['workers_needed'] = workersNeeded;
+    }
+    if (boostedUntil != null) {
+      payload['boosted_until'] = boostedUntil.toUtc().toIso8601String();
     }
     final row = await _client.from('gigs').insert(payload).select().single();
     return _gigFromRow(Map<String, dynamic>.from(row));
@@ -94,7 +98,30 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
       if (d > radiusMeters) continue;
       filtered.add(_ScoredGig(gig: g, distanceMeters: d));
     }
-    filtered.sort((a, b) => a.distanceMeters.compareTo(b.distanceMeters));
+    _sortFeedByBoostThenDistance(filtered);
+    return filtered.map((e) => e.gig).toList();
+  }
+
+  @override
+  Future<List<Gig>> listOpenJobsFeed({
+    GeoPoint? sortCenter,
+    int? minPayAmount,
+    String? category,
+  }) async {
+    final gigs = await listGigs();
+    final filtered = <_ScoredGig>[];
+    final center = sortCenter ?? DavaoDelSurScope.defaultCenter;
+    for (final g in gigs) {
+      if (g.status != GigStatus.open) continue;
+      if (!DavaoDelSurScope.contains(g.location)) continue;
+      if (category != null && category.isNotEmpty && g.category != category) {
+        continue;
+      }
+      if (minPayAmount != null && g.pay.amount < minPayAmount) continue;
+      final d = _distanceMeters(center, g.location);
+      filtered.add(_ScoredGig(gig: g, distanceMeters: d));
+    }
+    _sortFeedByBoostThenDistance(filtered);
     return filtered.map((e) => e.gig).toList();
   }
 
@@ -213,6 +240,7 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
 
   Gig _gigFromRow(Map<String, dynamic> row) {
     final wn = row['workers_needed'];
+    final bu = row['boosted_until'];
     return Gig(
       id: row['id'] as String,
       businessId: row['business_id'] as String,
@@ -234,6 +262,7 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
       createdAt: DateTime.parse(row['created_at'] as String),
       workersNeeded: wn == null ? null : (wn as num).toInt(),
       isUrgent: row['is_urgent'] == true,
+      boostedUntil: bu == null ? null : DateTime.parse(bu as String),
     );
   }
 
@@ -253,6 +282,15 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
     final dy = (a.lng - b.lng) * 111000.0;
     return math.sqrt(dx * dx + dy * dy).round();
   }
+}
+
+void _sortFeedByBoostThenDistance(List<_ScoredGig> filtered) {
+  filtered.sort((a, b) {
+    final ab = a.gig.isBoostedActive;
+    final bb = b.gig.isBoostedActive;
+    if (ab != bb) return ab ? -1 : 1;
+    return a.distanceMeters.compareTo(b.distanceMeters);
+  });
 }
 
 class _ScoredGig {

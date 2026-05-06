@@ -38,6 +38,7 @@ class MockMarketplaceRepository implements MarketplaceRepository {
     required String category,
     int? workersNeeded,
     bool isUrgent = false,
+    DateTime? boostedUntil,
   }) async {
     if (!DavaoDelSurScope.contains(location)) {
       throw ArgumentError(
@@ -62,6 +63,7 @@ class MockMarketplaceRepository implements MarketplaceRepository {
       createdAt: now,
       workersNeeded: workersNeeded,
       isUrgent: isUrgent,
+      boostedUntil: boostedUntil?.toUtc(),
     );
     await _saveGigs([...gigs, gig]);
     return gig;
@@ -97,7 +99,30 @@ class MockMarketplaceRepository implements MarketplaceRepository {
       if (d > radiusMeters) continue;
       filtered.add(_ScoredGig(gig: g, distanceMeters: d));
     }
-    filtered.sort((a, b) => a.distanceMeters.compareTo(b.distanceMeters));
+    _sortMockFeed(filtered);
+    return filtered.map((e) => e.gig).toList();
+  }
+
+  @override
+  Future<List<Gig>> listOpenJobsFeed({
+    GeoPoint? sortCenter,
+    int? minPayAmount,
+    String? category,
+  }) async {
+    final gigs = await listGigs();
+    final filtered = <_ScoredGig>[];
+    final center = sortCenter ?? DavaoDelSurScope.defaultCenter;
+    for (final g in gigs) {
+      if (g.status != GigStatus.open) continue;
+      if (!DavaoDelSurScope.contains(g.location)) continue;
+      if (category != null && category.isNotEmpty && g.category != category) {
+        continue;
+      }
+      if (minPayAmount != null && g.pay.amount < minPayAmount) continue;
+      final d = _distanceMeters(center, g.location);
+      filtered.add(_ScoredGig(gig: g, distanceMeters: d));
+    }
+    _sortMockFeed(filtered);
     return filtered.map((e) => e.gig).toList();
   }
 
@@ -196,6 +221,7 @@ class MockMarketplaceRepository implements MarketplaceRepository {
       createdAt: gig.createdAt,
       workersNeeded: gig.workersNeeded,
       isUrgent: gig.isUrgent,
+      boostedUntil: gig.boostedUntil,
     );
     final updatedGigs = [...gigs]..[idx] = updatedGig;
     await _saveGigs(updatedGigs);
@@ -239,6 +265,7 @@ class MockMarketplaceRepository implements MarketplaceRepository {
       createdAt: gig.createdAt,
       workersNeeded: gig.workersNeeded,
       isUrgent: gig.isUrgent,
+      boostedUntil: gig.boostedUntil,
     );
     final updatedGigs = [...gigs]..[idx] = updated;
     await _saveGigs(updatedGigs);
@@ -276,6 +303,7 @@ class MockMarketplaceRepository implements MarketplaceRepository {
         'createdAt': g.createdAt.toIso8601String(),
         'workersNeeded': g.workersNeeded,
         'isUrgent': g.isUrgent,
+        'boostedUntil': g.boostedUntil?.toIso8601String(),
       };
 
   Gig _gigFromJson(Map<String, dynamic> j) => Gig(
@@ -301,6 +329,9 @@ class MockMarketplaceRepository implements MarketplaceRepository {
             ? null
             : (j['workersNeeded'] as num).toInt(),
         isUrgent: j['isUrgent'] == true,
+        boostedUntil: j['boostedUntil'] == null
+            ? null
+            : DateTime.parse(j['boostedUntil'] as String),
       );
 
   Map<String, dynamic> _appToJson(GigApplication a) => {
@@ -325,6 +356,15 @@ class MockMarketplaceRepository implements MarketplaceRepository {
     final dy = (a.lng - b.lng) * 111000.0;
     return math.sqrt(dx * dx + dy * dy).round();
   }
+}
+
+void _sortMockFeed(List<_ScoredGig> filtered) {
+  filtered.sort((a, b) {
+    final ab = a.gig.isBoostedActive;
+    final bb = b.gig.isBoostedActive;
+    if (ab != bb) return ab ? -1 : 1;
+    return a.distanceMeters.compareTo(b.distanceMeters);
+  });
 }
 
 class _ScoredGig {

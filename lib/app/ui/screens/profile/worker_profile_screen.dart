@@ -13,6 +13,7 @@ import '../../../session/session_controller.dart';
 import '../../../shift/shift_repository.dart';
 import '../../../supabase/supabase_config.dart';
 import '../../theme/agap_colors.dart';
+import '../subscriptions/worker_subscription_screen.dart';
 
 /// Worker profile primary blue (mock).
 const Color _kProfileBlue = Color(0xFF1A4384);
@@ -68,7 +69,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
   double _avg = 0;
   int _completed = 0;
   WorkerIdentityDisplay? _worker;
-  int _totalEarnedCentavos = 0;
+  int _applicationsCount = 0;
   List<_RecentShiftVm> _recentShifts = const [];
 
   @override
@@ -116,8 +117,9 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
         .where((s) => s.workerId == userId && s.checkOutAt != null)
         .toList();
 
-    final wallet = await widget.payments.getWallet(userId);
-    final totalEarned = wallet.available.amount + wallet.pending.amount;
+    final apps = await widget.marketRepo.listApplications();
+    final applicationsCount =
+        apps.where((a) => a.workerId == userId).length;
 
     completed.sort(
       (a, b) => (b.checkOutAt ?? DateTime(1970)).compareTo(
@@ -175,7 +177,7 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
       _avg = avg;
       _completed = completed.length;
       _worker = identity;
-      _totalEarnedCentavos = totalEarned;
+      _applicationsCount = applicationsCount;
       _recentShifts = recentVm;
     });
   }
@@ -357,14 +359,12 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: _MetricCard(
-                      iconBoxColor: const Color(0xFFEFEBE9),
-                      icon: Icons.paid_rounded,
-                      iconColor: const Color(0xFF5D4037),
-                      value: _totalEarnedCentavos > 0
-                          ? _formatPhp(_totalEarnedCentavos)
-                          : '₱0',
-                      valueColor: _kProfileGreen,
-                      label: 'Total Earned',
+                      iconBoxColor: const Color(0xFFE8EFFF),
+                      icon: Icons.send_rounded,
+                      iconColor: const Color(0xFF5C6BC0),
+                      value: '$_applicationsCount',
+                      valueColor: _kProfileBlue,
+                      label: 'Applications',
                     ),
                   ),
                 ],
@@ -392,6 +392,15 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                 onIdVerification: () {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('ID verification (demo)')),
+                  );
+                },
+                onSubscription: () {
+                  Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => WorkerSubscriptionScreen(
+                        session: widget.session,
+                      ),
+                    ),
                   );
                 },
                 onMessages: widget.onOpenMessages,
@@ -776,6 +785,7 @@ class _ProfileMenuCard extends StatelessWidget {
     required this.onResume,
     required this.onCertifications,
     required this.onIdVerification,
+    required this.onSubscription,
     required this.onMessages,
     required this.onNotifications,
     required this.onLogout,
@@ -784,6 +794,7 @@ class _ProfileMenuCard extends StatelessWidget {
   final VoidCallback onResume;
   final VoidCallback onCertifications;
   final VoidCallback onIdVerification;
+  final VoidCallback onSubscription;
   final VoidCallback? onMessages;
   final VoidCallback? onNotifications;
   final Future<void> Function()? onLogout;
@@ -827,6 +838,14 @@ class _ProfileMenuCard extends StatelessWidget {
             iconColor: _kProfileGreen,
             title: 'ID Verification',
             onTap: onIdVerification,
+          ),
+          const Divider(height: 1),
+          _MenuRow(
+            icon: Icons.workspace_premium_rounded,
+            iconBg: const Color(0xFFEDE9FE),
+            iconColor: const Color(0xFF5B21B6),
+            title: 'Worker subscription',
+            onTap: onSubscription,
           ),
           if (onMessages != null) ...[
             const Divider(height: 1),

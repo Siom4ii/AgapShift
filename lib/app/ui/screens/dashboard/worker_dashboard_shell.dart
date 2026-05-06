@@ -13,7 +13,6 @@ import '../messages/messages_inbox_screen.dart';
 import '../notifications/notifications_screen.dart';
 import '../profile/worker_profile_screen.dart';
 import '../shift/worker_shift_screen.dart';
-import '../wallet/wallet_screen.dart';
 import '../../theme/agap_colors.dart';
 import '../../widgets/agap_app_bar.dart';
 import '../../widgets/agap_shell_nav.dart';
@@ -73,8 +72,6 @@ class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
     );
   }
 
-  /// Kept for [WorkerFindJobsScreen.onNotificationsFlowDone] / profile flows;
-  /// the shell app bar no longer shows a notification badge.
   Future<void> _syncNotificationBadge() async {}
 
   @override
@@ -84,6 +81,16 @@ class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
           repo: widget.repo,
           notifications: widget.notifications,
           session: widget.session,
+          shift: widget.shift,
+          ratings: widget.ratings,
+          onOpenFindJobs: () {
+            setState(() => _index = 1);
+            _syncNotificationBadge();
+          },
+          onOpenMyShift: () {
+            setState(() => _index = 2);
+            _syncNotificationBadge();
+          },
         ),
       1 => WorkerFindJobsScreen(
           repo: widget.repo,
@@ -94,11 +101,9 @@ class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
       2 => WorkerShiftScreen(
           marketRepo: widget.repo,
           shiftRepo: widget.shift,
-          payments: widget.payments,
           session: widget.session,
           showAppBar: false,
         ),
-      3 => WalletScreen(payments: widget.payments, session: widget.session, embedded: true),
       _ => WorkerProfileScreen(
           session: widget.session,
           shiftRepo: widget.shift,
@@ -126,21 +131,22 @@ class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
 
     return Scaffold(
       backgroundColor: AgapColors.pageBackground,
-      appBar: _index == 4
+      appBar: (_index == 0 || _index == 3)
           ? null
           : AgapAppBar(
-        onSearchTap: null,
-        onInboxTap: _openInbox,
-        inboxUnreadCount: 0,
-        onNotificationTap: null,
-        notificationUnreadCount: 0,
-        extraActions: const [],
-      ),
+              onSearchTap: null,
+              onInboxTap: _openInbox,
+              inboxUnreadCount: 0,
+              onNotificationTap: null,
+              notificationUnreadCount: 0,
+              extraActions: const [],
+            ),
       body: ShellTabTransition(
         tabIndex: _index,
         child: screen,
       ),
       bottomNavigationBar: AgapShellNavBar(
+        variant: AgapShellNavVariant.worker,
         selectedIndex: _index,
         onSelect: (i) {
           setState(() => _index = i);
@@ -148,8 +154,8 @@ class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
         },
         destinations: const [
           AgapShellDestination(
-            icon: Icons.map_outlined,
-            selectedIcon: Icons.map_rounded,
+            icon: Icons.home_outlined,
+            selectedIcon: Icons.home_rounded,
             label: 'Home',
           ),
           AgapShellDestination(
@@ -161,11 +167,6 @@ class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
             icon: Icons.event_note_outlined,
             selectedIcon: Icons.event_note_rounded,
             label: 'My Shift',
-          ),
-          AgapShellDestination(
-            icon: Icons.account_balance_wallet_outlined,
-            selectedIcon: Icons.account_balance_wallet_rounded,
-            label: 'Wallet',
           ),
           AgapShellDestination(
             icon: Icons.person_outline_rounded,

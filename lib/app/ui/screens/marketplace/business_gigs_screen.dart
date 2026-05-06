@@ -161,7 +161,6 @@ class _BusinessGigsScreenState extends State<BusinessGigsScreen> {
         builder: (_) => BusinessGigApplicantsScreen(
           repo: widget.repo,
           notifications: widget.notifications,
-          payments: widget.payments,
           session: widget.session,
           ratings: widget.ratings,
           shiftRepo: widget.shiftRepo,

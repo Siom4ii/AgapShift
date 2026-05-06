@@ -61,7 +61,6 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
   int _walletAvailableCentavos = 0;
   int _totalSpentCentavos = 0;
   List<_Applicant> _recentApplicants = const [];
-  List<_ExpenseRow> _monthlyExpenses = const [];
 
   static final _headerGradient = LinearGradient(
     colors: [
@@ -117,36 +116,6 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
         }
       }
 
-      final now = DateTime.now();
-      final monthStart = DateTime(now.year, now.month, 1);
-      final monthFundings = ledger.where((t) {
-        return t.userId == businessId &&
-            t.type == TransactionType.escrowFunding &&
-            !t.createdAt.toLocal().isBefore(monthStart);
-      }).toList();
-
-      final spendByCategory = <String, int>{};
-      for (final t in monthFundings) {
-        final gid = t.gigId;
-        if (gid == null) continue;
-        var g = gigById[gid];
-        g ??= await widget.repo.getGig(gid);
-        final label = g?.category.trim().isNotEmpty == true
-            ? g!.category
-            : 'Jobs';
-        spendByCategory[label] =
-            (spendByCategory[label] ?? 0) + t.amount.amount;
-      }
-
-      final expenseRows = <_ExpenseRow>[];
-      for (final e in spendByCategory.entries) {
-        final pesos = (e.value / 100).round();
-        if (pesos > 0) {
-          expenseRows.add(_ExpenseRow(label: e.key, amount: pesos));
-        }
-      }
-      expenseRows.sort((a, b) => b.amount.compareTo(a.amount));
-
       final pendingApps = apps
           .where(
             (a) =>
@@ -190,7 +159,6 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
         _businessRatingAvg = avgRating;
         _walletAvailableCentavos = wallet.available.amount;
         _totalSpentCentavos = spentCentavos;
-        _monthlyExpenses = expenseRows;
         _recentApplicants = recent;
       });
     } finally {
@@ -223,7 +191,6 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
         builder: (_) => BusinessGigApplicantsScreen(
           repo: widget.repo,
           notifications: widget.notifications,
-          payments: widget.payments,
           ratings: widget.ratings,
           session: widget.session,
           shiftRepo: widget.shiftRepo,
@@ -646,57 +613,7 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
                   ),
                 ),
               ),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(20, 20, 20, 8),
-                child: Row(
-                  children: [
-                    Text(
-                      "This Month's Expenses",
-                      style: GoogleFonts.inter(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Icon(
-                      Icons.show_chart_rounded,
-                      size: 20,
-                      color: AgapColors.businessGreen,
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: EdgeInsets.fromLTRB(20, 0, 20, 40 + bottomInset),
-                child: _SectionCard(
-                  child: _monthlyExpenses.isEmpty
-                      ? Text(
-                          'No escrow funding recorded this month.',
-                          style: GoogleFonts.inter(
-                            color: AgapColors.textMuted,
-                            fontWeight: FontWeight.w600,
-                            height: 1.4,
-                          ),
-                        )
-                      : Column(
-                          children: [
-                            for (var i = 0; i < _monthlyExpenses.length; i++) ...[
-                              if (i > 0) const SizedBox(height: 14),
-                              _ExpenseBar(
-                                row: _monthlyExpenses[i],
-                                maxAmount: _monthlyExpenses
-                                    .map((e) => e.amount)
-                                    .reduce((a, b) => a > b ? a : b),
-                              ),
-                            ],
-                          ],
-                        ),
-                ),
-              ),
-            ),
+            SliverToBoxAdapter(child: SizedBox(height: 24 + bottomInset)),
           ],
         ),
       ),
@@ -1162,60 +1079,6 @@ class _ApplicantTile extends StatelessWidget {
   }
 }
 
-class _ExpenseRow {
-  const _ExpenseRow({required this.label, required this.amount});
-
-  final String label;
-  final int amount;
-}
-
-class _ExpenseBar extends StatelessWidget {
-  const _ExpenseBar({required this.row, required this.maxAmount});
-
-  final _ExpenseRow row;
-  final int maxAmount;
-
-  @override
-  Widget build(BuildContext context) {
-    final frac = row.amount / maxAmount;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: Text(
-                row.label,
-                style: GoogleFonts.inter(
-                  fontWeight: FontWeight.w700,
-                  fontSize: 14,
-                ),
-              ),
-            ),
-            Text(
-              '₱${_formatThousands(row.amount)}',
-              style: GoogleFonts.inter(
-                fontWeight: FontWeight.w800,
-                fontSize: 14,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        ClipRRect(
-          borderRadius: BorderRadius.circular(4),
-          child: LinearProgressIndicator(
-            value: frac,
-            minHeight: 8,
-            backgroundColor: AgapColors.businessMint,
-            color: AgapColors.businessGreen,
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 /// Wallet header — compact peso from minor units (centavos).
 String _formatPesoCompact(int centavos) {
   final p = centavos / 100.0;
@@ -1224,16 +1087,6 @@ String _formatPesoCompact(int centavos) {
   if (p >= 1000) return '₱${(p / 1000).toStringAsFixed(1)}k';
   if (p == p.roundToDouble()) return '₱${p.round()}';
   return '₱${p.toStringAsFixed(0)}';
-}
-
-String _formatThousands(int n) {
-  final digits = n.toString().split('').reversed.toList();
-  final out = <String>[];
-  for (var i = 0; i < digits.length; i++) {
-    if (i > 0 && i % 3 == 0) out.add(',');
-    out.add(digits[i]);
-  }
-  return out.reversed.join();
 }
 
 String _businessDisplayName(String email) {

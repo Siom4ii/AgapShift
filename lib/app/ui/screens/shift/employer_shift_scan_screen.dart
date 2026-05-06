@@ -6,8 +6,6 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
-import '../../../marketplace/marketplace_repository.dart';
-import '../../../payments/payments_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../../shift/shift_repository.dart';
@@ -21,15 +19,11 @@ class EmployerShiftScanScreen extends StatefulWidget {
     required this.shiftRepo,
     required this.gig,
     required this.session,
-    required this.payments,
-    required this.repo,
   });
 
   final ShiftRepository shiftRepo;
   final Gig gig;
   final SessionController session;
-  final PaymentsRepository payments;
-  final MarketplaceRepository repo;
 
   @override
   State<EmployerShiftScanScreen> createState() =>
@@ -60,19 +54,6 @@ class _EmployerShiftScanScreenState extends State<EmployerShiftScanScreen> {
         qrToken: code,
         businessId: businessId,
       );
-
-      if (result.scanType == AttendanceScanType.checkOut) {
-        final workerId = await widget.repo.getHiredWorkerId(widget.gig.id);
-        if (workerId != null) {
-          final funded = await widget.payments.isEscrowFunded(widget.gig.id);
-          if (funded) {
-            await widget.payments.releaseEscrowToWorker(
-              gigId: widget.gig.id,
-              workerId: workerId,
-            );
-          }
-        }
-      }
 
       if (!mounted) return;
       setState(() => _done = true);
@@ -466,7 +447,7 @@ class _EmployerShiftScanScreenState extends State<EmployerShiftScanScreen> {
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    'Align the QR inside the frame. Scan once when the shift starts and again when it ends.',
+                    'Align the QR inside the frame. Each workday needs its own check-in and check-out scan.',
                     style: GoogleFonts.inter(
                       fontSize: 12.5,
                       fontWeight: FontWeight.w600,

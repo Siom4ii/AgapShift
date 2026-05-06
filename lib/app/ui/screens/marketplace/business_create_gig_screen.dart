@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../domain/models.dart';
 import '../../../location/davao_del_sur_scope.dart';
 import '../../../marketplace/marketplace_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
+import '../../../subscriptions/revenue_stub_service.dart';
+import '../../../supabase/supabase_config.dart';
 import '../../theme/agap_colors.dart';
 
 /// Pay unit shown next to the rate (/day, /hr, /shift).
@@ -54,7 +57,12 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
   bool _urgent = false;
 
   bool _submitting = false;
+  bool _payingVerificationFee = false;
   String? _error;
+  /// From `employer_entitlements.jobs_posted_count` when Supabase is on.
+  int? _employerJobsPostedCount;
+  DateTime? _verificationFeePaidUntil;
+  bool _wantBoost = false;
 
   static const _jobTypeKeys = <String>[
     'Warehouse',
@@ -66,6 +74,16 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
     'Cleaning',
     'Other',
   ];
+
+  bool get _employerVerificationOk {
+    if (!SupabaseConfig.isConfigured) return true;
+    final c = _employerJobsPostedCount;
+    if (c == null) return true;
+    if (c < 1) return true;
+    final v = _verificationFeePaidUntil;
+    if (v == null) return false;
+    return v.isAfter(DateTime.now());
+  }
 
   bool get _canSubmit {
     if (_title.text.trim().isEmpty) return false;
@@ -79,6 +97,7 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
     final startDt = _composeDateTime(_startDate!, _startTime!);
     final endDt = _composeDateTime(_startDate!, _endTime!);
     if (!endDt.isAfter(startDt)) return false;
+    if (!_employerVerificationOk) return false;
     return true;
   }
 
@@ -119,6 +138,64 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
     if (_urgent) parts.add('Marked as urgent — workers prioritized.');
     parts.add('Workers needed: $_workersNeeded');
     return parts.join('\n\n');
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _loadEmployerPostCount();
+  }
+
+  Future<void> _loadEmployerPostCount() async {
+    if (!SupabaseConfig.isConfigured) return;
+    final id = appActorId(widget.session, mockFallback: '');
+    if (id.isEmpty) return;
+    try {
+      final row = await Supabase.instance.client
+          .from('employer_entitlements')
+          .select('jobs_posted_count, verification_fee_paid_until')
+          .eq('business_id', id)
+          .maybeSingle();
+      if (!mounted) return;
+      setState(() {
+        if (row == null) {
+          _employerJobsPostedCount = 0;
+          _verificationFeePaidUntil = null;
+        } else {
+          final n = row['jobs_posted_count'];
+          _employerJobsPostedCount =
+              n is int ? n : int.tryParse('$n') ?? 0;
+          final vf = row['verification_fee_paid_until'];
+          _verificationFeePaidUntil =
+              vf == null ? null : DateTime.parse(vf as String);
+        }
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _employerJobsPostedCount = null;
+          _verificationFeePaidUntil = null;
+        });
+      }
+    }
+  }
+
+  Future<void> _payVerificationFeeStub() async {
+    final id = appActorId(widget.session, mockFallback: '');
+    if (id.isEmpty) return;
+    setState(() => _payingVerificationFee = true);
+    await RevenueStubService.payEmployerVerificationFee(id);
+    if (!mounted) return;
+    setState(() => _payingVerificationFee = false);
+    await _loadEmployerPostCount();
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Verification & security fee recorded (demo). Use a real gateway for production.',
+        ),
+      ),
+    );
   }
 
   @override
@@ -218,8 +295,10 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
         category: _category,
         workersNeeded: _workersNeeded.clamp(1, 999),
         isUrgent: _urgent,
+        boostedUntil: _wantBoost ? RevenueStubService.boostedUntilNow() : null,
       );
       if (!mounted) return;
+      await _loadEmployerPostCount();
       await widget.onCreated();
     } catch (e) {
       if (!mounted) return;
@@ -325,6 +404,17 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
                               ),
                             ),
                           ),
+                        ),
+                      ),
+                    if (SupabaseConfig.isConfigured &&
+                        _employerJobsPostedCount != null)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 16),
+                        child: _EmployerPostingFeeNotice(
+                          jobsPostedCount: _employerJobsPostedCount!,
+                          verificationPaid: _employerVerificationOk,
+                          payBusy: _payingVerificationFee,
+                          onPayVerification: _payVerificationFeeStub,
                         ),
                       ),
                     _SectionCard(
@@ -701,6 +791,42 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
                               ),
                             ],
                           ),
+                          const SizedBox(height: 16),
+                          Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      'Boost this post',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w800,
+                                        color: _navyTitle,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      'Pin to top of worker feeds for 7 days (optional, demo)',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 12,
+                                        color: _labelGrey,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              Switch.adaptive(
+                                value: _wantBoost,
+                                activeThumbColor: const Color(0xFF7C3AED),
+                                onChanged: (v) =>
+                                    setState(() => _wantBoost = v),
+                              ),
+                            ],
+                          ),
                         ],
                       ),
                     ),
@@ -859,6 +985,104 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
           color: AgapColors.businessGreen,
           width: 1.5,
         ),
+      ),
+    );
+  }
+}
+
+/// Explains first-post-free vs later verification fee + boost (revenue model stub).
+class _EmployerPostingFeeNotice extends StatelessWidget {
+  const _EmployerPostingFeeNotice({
+    required this.jobsPostedCount,
+    required this.verificationPaid,
+    this.payBusy = false,
+    this.onPayVerification,
+  });
+
+  /// Existing rows in `gigs` for this employer (before this draft is submitted).
+  final int jobsPostedCount;
+  final bool verificationPaid;
+  final bool payBusy;
+  final Future<void> Function()? onPayVerification;
+
+  @override
+  Widget build(BuildContext context) {
+    final isFirst = jobsPostedCount == 0;
+    final needsVerification = !isFirst && !verificationPaid;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEFF6FF),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFBFDBFE)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isFirst ? Icons.celebration_outlined : Icons.verified_user_outlined,
+                size: 22,
+                color: const Color(0xFF1D4ED8),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  isFirst
+                      ? 'First job post is free'
+                      : (verificationPaid
+                          ? 'Verification paid — you can post'
+                          : 'Verification & security fee required'),
+                  style: GoogleFonts.inter(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w800,
+                    color: const Color(0xFF1E3A8A),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            isFirst
+                ? 'Your first listing is free (any number of workers on that post). '
+                    'The next listings need a one-time verification & security payment per year.'
+                : (verificationPaid
+                    ? 'Your verification window is active. Turn on “Boost this post” below to pin this job to the top of worker feeds for 7 days.'
+                    : 'You already used your free post. Pay the verification & security fee (demo) before publishing another job.'),
+            style: GoogleFonts.inter(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              height: 1.35,
+              color: const Color(0xFF1E40AF),
+            ),
+          ),
+          if (needsVerification && onPayVerification != null) ...[
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.tonal(
+                onPressed: payBusy ? null : onPayVerification,
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFDBEAFE),
+                  foregroundColor: const Color(0xFF1E3A8A),
+                ),
+                child: payBusy
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Text(
+                        'Pay verification & security (demo ₱499)',
+                        style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+                      ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }

@@ -1,10 +1,8 @@
 import '../../domain/models.dart';
 import 'payments_repository.dart';
 
-/// Offline demo: empty balances (matches [StubPaymentsRepository]).
-class MockPaymentsRepository implements PaymentsRepository {
-  MockPaymentsRepository(Object _store);
-
+/// No escrow / no ledger persistence — revenue features use separate flows later.
+class StubPaymentsRepository implements PaymentsRepository {
   @override
   Future<Wallet> getWallet(String userId) async {
     return Wallet(

@@ -8,7 +8,7 @@ import '../notifications/notification_repository.dart';
 import '../notifications/supabase_notification_repository.dart';
 import '../payments/mock_payments_repository.dart';
 import '../payments/payments_repository.dart';
-import '../payments/supabase_payments_repository.dart';
+import '../payments/stub_payments_repository.dart';
 import '../ratings/mock_ratings_repository.dart';
 import '../session/session_controller.dart';
 import '../shift/mock_shift_repository.dart';
@@ -64,7 +64,7 @@ class MarketplaceScope extends InheritedWidget {
           ? SupabaseNotificationRepository()
           : MockNotificationRepository(store),
       payments: SupabaseConfig.isConfigured
-          ? SupabasePaymentsRepository()
+          ? StubPaymentsRepository()
           : MockPaymentsRepository(store),
       ratings: MockRatingsRepository(store),
       shift: SupabaseConfig.isConfigured

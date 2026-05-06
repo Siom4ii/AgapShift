@@ -9,6 +9,7 @@ import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
 import '../../../marketplace/marketplace_repository.dart';
 import '../../../payments/payments_repository.dart';
+import '../../../profile/worker_display_names.dart';
 import '../../../ratings/mock_ratings_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
@@ -100,16 +101,24 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
       }
     }
 
+    final hiredSlice = hiredApps.take(5).toList();
+    final nameByWorker =
+        await fetchWorkerDisplayNamesById(hiredSlice.map((a) => a.workerId).toSet());
+
     final recentHires = <_RecentHireVm>[];
-    for (final a in hiredApps.take(5)) {
+    for (final a in hiredSlice) {
       final g = gigById[a.gigId];
       final wAvg = await widget.ratings.averageForUser(a.workerId);
       final stars = wAvg > 0 ? wAvg.round().clamp(1, 5) : 0;
       final payPesos = g == null ? 0 : (g.pay.amount / 100).round();
+      final resolved = nameByWorker[a.workerId]?.trim();
+      final displayName = (resolved != null && resolved.isNotEmpty)
+          ? resolved
+          : applicantDisplayNameFallback(a.workerId);
       recentHires.add(
         _RecentHireVm(
           workerId: a.workerId,
-          name: _workerLabel(a.workerId),
+          name: displayName,
           role: g?.title ?? 'Shift',
           when: _relativeWhen(a.createdAt.toLocal()),
           amount: '₱${_formatThousandsInt(payPesos)}',
@@ -147,12 +156,6 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
       _totalPaidCentavos = paidCentavos;
       _recentHires = recentHires;
     });
-  }
-
-  String _workerLabel(String id) {
-    final t = id.trim();
-    if (t.length <= 12) return 'Worker $t';
-    return 'Worker …${t.substring(t.length - 6)}';
   }
 
   String _relativeWhen(DateTime local) {
@@ -466,18 +469,6 @@ String _formatThousandsInt(int n) {
     buf.write(s[i]);
   }
   return buf.toString();
-}
-
-String _initialsFromPersonName(String name) {
-  final parts =
-      name.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty).toList();
-  if (parts.length >= 2) {
-    return '${parts[0][0]}${parts[1][0]}'.toUpperCase();
-  }
-  if (parts.isNotEmpty && parts[0].length >= 2) {
-    return parts[0].substring(0, 2).toUpperCase();
-  }
-  return name.isNotEmpty ? name[0].toUpperCase() : '?';
 }
 
 class _BusinessProfileOwnerTab extends StatelessWidget {
@@ -941,7 +932,10 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
                     for (var i = 0; i < recentHires.length; i++) ...[
                       if (i > 0) const Divider(height: 1),
                       _RecentHireRow(
-                        initials: _initialsFromPersonName(recentHires[i].name),
+                        initials: applicantInitialsFromName(
+                          recentHires[i].name,
+                          recentHires[i].workerId,
+                        ),
                         name: recentHires[i].name,
                         role: recentHires[i].role,
                         when: recentHires[i].when,

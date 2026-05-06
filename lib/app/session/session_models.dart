@@ -63,6 +63,8 @@ enum LoginResult {
   notFound,
   /// Wrong password, invalid email format, or unknown user (Supabase).
   invalidCredentials,
+  /// Signed-in user is `profiles.role = admin` (staff). Use the web admin only.
+  staffUseWebAdmin,
   unexpectedError,
 }
 

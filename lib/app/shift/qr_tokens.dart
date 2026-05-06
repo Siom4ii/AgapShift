@@ -9,20 +9,22 @@ class QrTokenCodec {
 
   final String _secret;
 
-  /// [workerId] must be set for worker-shown QRs (employer scans). Omit only for legacy tokens.
+  /// [workerId] + [workDateYmd] (`yyyy-MM-dd`) for worker-shown QRs (employer scans).
   String createToken({
     required String gigId,
     required AttendanceScanType type,
     required DateTime expiresAt,
     String? workerId,
+    String? workDateYmd,
   }) {
     final payload = <String, dynamic>{
-      'v': 1,
+      'v': 2,
       'gigId': gigId,
       'type': type.name,
       'exp': expiresAt.toUtc().millisecondsSinceEpoch,
       'nonce': DateTime.now().microsecondsSinceEpoch.toString(),
       if (workerId != null) 'workerId': workerId,
+      if (workDateYmd != null) 'workDate': workDateYmd,
     };
     final body = jsonEncode(payload);
     final sig = _hmac(body);
@@ -113,12 +115,33 @@ class QrTokenCodec {
     if (now.toUtc().isAfter(exp)) {
       return WorkerAttendanceQrParseResult.invalid('Token expired');
     }
+    final v = map['v'];
+    final int? version = v is int ? v : int.tryParse('$v');
+    String workDateYmd;
+    final rawWd = map['workDate'];
+    if (rawWd is String && rawWd.length >= 10) {
+      workDateYmd = rawWd.substring(0, 10);
+    } else if (version == null || version < 2) {
+      workDateYmd = _dateYmdFromUtc(now);
+    } else {
+      return WorkerAttendanceQrParseResult.invalid('Missing work day');
+    }
+
     return WorkerAttendanceQrParseResult.valid(
       gigId: gid,
       workerId: wid,
       type: type,
+      workDateYmd: workDateYmd,
       expiresAt: exp,
     );
+  }
+
+  static String _dateYmdFromUtc(DateTime t) {
+    final u = t.toUtc();
+    final y = u.year.toString().padLeft(4, '0');
+    final m = u.month.toString().padLeft(2, '0');
+    final d = u.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
   }
 
   String _hmac(String body) {
@@ -146,6 +169,7 @@ class WorkerAttendanceQrParseResult {
     this.gigId,
     this.workerId,
     this.type,
+    this.workDateYmd,
     this.expiresAt,
   });
 
@@ -156,6 +180,7 @@ class WorkerAttendanceQrParseResult {
     required String gigId,
     required String workerId,
     required AttendanceScanType type,
+    required String workDateYmd,
     required DateTime expiresAt,
   }) {
     return WorkerAttendanceQrParseResult._(
@@ -163,6 +188,7 @@ class WorkerAttendanceQrParseResult {
       gigId: gigId,
       workerId: workerId,
       type: type,
+      workDateYmd: workDateYmd,
       expiresAt: expiresAt,
     );
   }
@@ -172,6 +198,7 @@ class WorkerAttendanceQrParseResult {
   final String? gigId;
   final String? workerId;
   final AttendanceScanType? type;
+  final String? workDateYmd;
   final DateTime? expiresAt;
 }
 

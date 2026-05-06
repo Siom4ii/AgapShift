@@ -8,13 +8,16 @@ import '../../../../domain/models.dart';
 import '../../../location/geo_distance.dart';
 import '../../../location/user_geo_point.dart';
 import '../../../marketplace/marketplace_repository.dart';
+import '../../../marketplace/marketplace_scope.dart';
 import '../../../notifications/notification_repository.dart';
+import '../../../worker/worker_apply_guard.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../../supabase/supabase_config.dart';
 import '../../theme/agap_colors.dart';
 import '../../widgets/locked_action.dart';
 import '../../widgets/success_feedback.dart';
+import '../subscriptions/worker_subscription_screen.dart';
 
 const Color _purpleDeep = Color(0xFF5B21B6);
 const Color _purple = Color(0xFF7C3AED);
@@ -184,6 +187,44 @@ class _WorkerGigDetailsScreenState extends State<WorkerGigDetailsScreen> {
     }
     final workerId = appActorId(widget.session, mockFallback: 'worker');
     if (_myApplication != null) return;
+    final shift = MarketplaceScope.of(context).shift;
+    final block = await WorkerApplyGuard.blockingReason(
+      shiftRepo: shift,
+      session: widget.session,
+    );
+    if (!mounted) return;
+    if (block != null) {
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(
+            'Subscription required',
+            style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+          ),
+          content: Text(block, style: GoogleFonts.inter(height: 1.35)),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Not now'),
+            ),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                Navigator.of(context).push<void>(
+                  MaterialPageRoute<void>(
+                    builder: (_) => WorkerSubscriptionScreen(
+                      session: widget.session,
+                    ),
+                  ),
+                );
+              },
+              child: const Text('View plans'),
+            ),
+          ],
+        ),
+      );
+      return;
+    }
     try {
       final submitted = await widget.repo.applyToGig(
         gigId: widget.gigId,
@@ -350,6 +391,7 @@ class _WorkerGigDetailsScreenState extends State<WorkerGigDetailsScreen> {
                   businessName: business,
                   category: gig.category,
                   categoryIcon: _categoryIcon(gig.category),
+                  showBoosted: gig.isBoostedActive,
                   onBack: () => Navigator.of(context).maybePop(),
                   onBookmark: () {
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -580,6 +622,7 @@ class _GigHeader extends StatelessWidget {
     required this.businessName,
     required this.category,
     required this.categoryIcon,
+    this.showBoosted = false,
     required this.onBack,
     required this.onBookmark,
     required this.onShare,
@@ -589,6 +632,7 @@ class _GigHeader extends StatelessWidget {
   final String businessName;
   final String category;
   final IconData categoryIcon;
+  final bool showBoosted;
   final VoidCallback onBack;
   final VoidCallback onBookmark;
   final VoidCallback onShare;
@@ -683,34 +727,70 @@ class _GigHeader extends StatelessWidget {
                           ),
                         ),
                         const SizedBox(height: 10),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.2),
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              const Icon(
-                                Icons.star_rounded,
-                                color: Color(0xFFFFE082),
-                                size: 18,
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 5,
                               ),
-                              const SizedBox(width: 4),
-                              Text(
-                                category,
-                                style: GoogleFonts.inter(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                  color: Colors.white,
+                              decoration: BoxDecoration(
+                                color: Colors.white.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Icon(
+                                    Icons.star_rounded,
+                                    color: Color(0xFFFFE082),
+                                    size: 18,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    category,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w700,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            if (showBoosted)
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 5,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFFDE68A),
+                                  borderRadius: BorderRadius.circular(999),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(
+                                      Icons.rocket_launch_rounded,
+                                      color: Color(0xFF78350F),
+                                      size: 16,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Boosted',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w800,
+                                        color: const Color(0xFF78350F),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                            ],
-                          ),
+                          ],
                         ),
                       ],
                     ),

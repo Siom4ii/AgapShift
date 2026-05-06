@@ -1,7 +1,12 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:geolocator/geolocator.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../domain/business_identity.dart';
@@ -62,6 +67,14 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
   GeoPoint _searchCenter = DavaoDelSurScope.defaultCenter;
   String _locationSubtitle = DavaoDelSurScope.fallbackLocationLabel;
 
+  final MapController _mapController = MapController();
+  LatLng _mapCenter = LatLng(
+    DavaoDelSurScope.defaultCenter.lat,
+    DavaoDelSurScope.defaultCenter.lng,
+  );
+  int _radiusM = 5000;
+  int _minPay = 0;
+
   @override
   void initState() {
     super.initState();
@@ -83,20 +96,38 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
     if (g != null && DavaoDelSurScope.contains(g)) {
       setState(() {
         _searchCenter = g;
+        _mapCenter = LatLng(g.lat, g.lng);
         _locationSubtitle = 'Near your location · ${DavaoDelSurScope.regionLabel}';
+      });
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _mapController.move(_mapCenter, 13);
       });
       return true;
     }
     if (g != null && !DavaoDelSurScope.contains(g)) {
       setState(() {
         _searchCenter = DavaoDelSurScope.defaultCenter;
+        _mapCenter = LatLng(
+          DavaoDelSurScope.defaultCenter.lat,
+          DavaoDelSurScope.defaultCenter.lng,
+        );
         _locationSubtitle = DavaoDelSurScope.outsideRegionListLabel;
+      });
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _mapController.move(_mapCenter, 13);
       });
       return false;
     }
     setState(() {
       _searchCenter = DavaoDelSurScope.defaultCenter;
+      _mapCenter = LatLng(
+        DavaoDelSurScope.defaultCenter.lat,
+        DavaoDelSurScope.defaultCenter.lng,
+      );
       _locationSubtitle = DavaoDelSurScope.fallbackLocationLabel;
+    });
+    SchedulerBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _mapController.move(_mapCenter, 13);
     });
     return false;
   }
@@ -104,7 +135,178 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
   @override
   void dispose() {
     _search.dispose();
+    _mapController.dispose();
     super.dispose();
+  }
+
+  String? _apiCategory() {
+    switch (_selectedCategoryKey) {
+      case 'warehouse':
+        return 'Warehouse';
+      case 'food':
+        return 'Food Service';
+      case 'retail':
+        return 'Retail';
+      case 'event':
+        return 'Events';
+      default:
+        return null;
+    }
+  }
+
+  Future<void> _recenterOnMyLocation() async {
+    try {
+      if (!kIsWeb) {
+        final on = await Geolocator.isLocationServiceEnabled();
+        if (!on) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Turn on location services to use this feature.'),
+            ),
+          );
+          return;
+        }
+      }
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied ||
+          perm == LocationPermission.deniedForever) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Location permission is required to use your position.'),
+          ),
+        );
+        return;
+      }
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 20),
+        ),
+      );
+      if (!mounted) return;
+      final gp = GeoPoint(lat: pos.latitude, lng: pos.longitude);
+      if (!DavaoDelSurScope.contains(gp)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(DavaoDelSurScope.outsideRegionListLabel)),
+        );
+        return;
+      }
+      setState(() {
+        _searchCenter = gp;
+        _mapCenter = LatLng(pos.latitude, pos.longitude);
+        _locationSubtitle = 'Near your location · ${DavaoDelSurScope.regionLabel}';
+      });
+      SchedulerBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _mapController.move(_mapCenter, 14);
+      });
+      await _load();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Could not get your location. Try again.')),
+      );
+    }
+  }
+
+  void _showMapFiltersSheet() {
+    var radius = _radiusM;
+    var minPay = _minPay;
+    showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setModal) {
+            return Padding(
+              padding: EdgeInsets.only(
+                left: 20,
+                right: 20,
+                bottom: MediaQuery.paddingOf(ctx).bottom + 20,
+                top: 8,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('Map search', style: Theme.of(ctx).textTheme.titleLarge),
+                  const SizedBox(height: 16),
+                  DropdownButtonFormField<int>(
+                    value: radius,
+                    decoration: const InputDecoration(labelText: 'Radius'),
+                    items: const [
+                      DropdownMenuItem(value: 1000, child: Text('1 km')),
+                      DropdownMenuItem(value: 3000, child: Text('3 km')),
+                      DropdownMenuItem(value: 5000, child: Text('5 km')),
+                      DropdownMenuItem(value: 10000, child: Text('10 km')),
+                    ],
+                    onChanged: (v) => setModal(() => radius = v ?? radius),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int>(
+                    value: minPay,
+                    decoration: const InputDecoration(labelText: 'Minimum pay'),
+                    items: const [
+                      DropdownMenuItem(value: 0, child: Text('Any pay')),
+                      DropdownMenuItem(value: 50000, child: Text('≥ ₱500')),
+                      DropdownMenuItem(value: 80000, child: Text('≥ ₱800')),
+                      DropdownMenuItem(value: 100000, child: Text('≥ ₱1000')),
+                    ],
+                    onChanged: (v) => setModal(() => minPay = v ?? minPay),
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton(
+                    onPressed: () {
+                      setState(() {
+                        _radiusM = radius;
+                        _minPay = minPay;
+                      });
+                      Navigator.pop(ctx);
+                      _load();
+                    },
+                    child: const Text('Apply'),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  List<Marker> _gigMarkers(BuildContext context) {
+    return [
+      for (final g in _filtered.take(40))
+        Marker(
+          point: LatLng(g.location.lat, g.location.lng),
+          width: 76,
+          height: 92,
+          alignment: Alignment.bottomCenter,
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () async {
+              await Navigator.of(context).push<void>(
+                MaterialPageRoute<void>(
+                  builder: (_) => WorkerGigDetailsScreen(
+                    repo: widget.repo,
+                    notifications: widget.notifications,
+                    session: widget.session,
+                    gigId: g.id,
+                  ),
+                ),
+              );
+              if (context.mounted) await _load();
+            },
+            child: _FindJobsMapPin(gig: g),
+          ),
+        ),
+    ];
   }
 
   Future<Map<String, String>> _fetchBusinessNames(Iterable<String> ids) async {
@@ -149,9 +351,10 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
           );
         }
       }
-      final items = await widget.repo.listNearbyGigs(
-        center: _searchCenter,
-        radiusMeters: 10000,
+      final items = await widget.repo.listOpenJobsFeed(
+        sortCenter: _searchCenter,
+        minPayAmount: _minPay == 0 ? null : _minPay,
+        category: _apiCategory(),
       );
       final apps = await widget.repo.listApplications();
       final uid = appActorId(widget.session, mockFallback: '');
@@ -186,11 +389,7 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
 
   List<Gig> get _filtered {
     final q = _search.text.trim().toLowerCase();
-    final cat = _selectedCategoryKey;
     return _items.where((g) {
-      if (cat.isNotEmpty && !g.category.toLowerCase().contains(cat)) {
-        return false;
-      }
       if (q.isEmpty) return true;
       final biz = (_businessNames[g.businessId] ?? '').toLowerCase();
       return g.title.toLowerCase().contains(q) ||
@@ -204,18 +403,151 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
   Widget build(BuildContext context) {
     final count = _filtered.length;
     final bottomInset = MediaQuery.paddingOf(context).bottom;
-    // Extra scroll padding so the last job card clears the bottom nav comfortably.
-    final listBottomPad = 32.0 + bottomInset + 8;
+    final listBottomPad = 28.0 + bottomInset;
 
-    return ColoredBox(
-      color: AgapColors.pageBackground,
-        child: RefreshIndicator(
-        color: _findJobsPurple,
-        onRefresh: () => _load(refreshUserPosition: true),
-        child: ListView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: EdgeInsets.fromLTRB(20, 8, 20, listBottomPad),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Stack(
+          clipBehavior: Clip.none,
+          fit: StackFit.expand,
           children: [
+            Positioned.fill(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: FlutterMap(
+                      mapController: _mapController,
+                      options: MapOptions(
+                        initialCenter: _mapCenter,
+                        initialZoom: 13,
+                        interactionOptions: const InteractionOptions(
+                          flags: InteractiveFlag.all,
+                        ),
+                      ),
+                      children: [
+                        TileLayer(
+                          urlTemplate:
+                              'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                          userAgentPackageName: 'dev.agapshift.nexora',
+                        ),
+                        MarkerLayer(markers: _gigMarkers(context)),
+                      ],
+                    ),
+                  ),
+                  Positioned(
+                    left: 8,
+                    bottom: MediaQuery.paddingOf(context).bottom + 8,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.92),
+                        borderRadius: BorderRadius.circular(8),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.08),
+                            blurRadius: 6,
+                          ),
+                        ],
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4,
+                        ),
+                        child: Text(
+                          '© OpenStreetMap',
+                          style: GoogleFonts.inter(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w600,
+                            color: AgapColors.textMuted,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  if (_error != null)
+                    Positioned(
+                      left: 12,
+                      right: 12,
+                      top: 8,
+                      child: Material(
+                        borderRadius: BorderRadius.circular(12),
+                        color: Colors.red.shade50,
+                        child: Padding(
+                          padding: const EdgeInsets.all(10),
+                          child: Text(
+                            _error!,
+                            style: TextStyle(
+                              color: Colors.red.shade900,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  Positioned(
+                    right: 10,
+                    top: MediaQuery.paddingOf(context).top + 6,
+                    child: Column(
+                      children: [
+                        _FindJobsMapFab(
+                          icon: Icons.my_location_rounded,
+                          onPressed: _recenterOnMyLocation,
+                        ),
+                        const SizedBox(height: 8),
+                        _FindJobsMapFab(
+                          icon: Icons.tune_rounded,
+                          onPressed: _showMapFiltersSheet,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            DraggableScrollableSheet(
+              initialChildSize: 0.5,
+              minChildSize: 0.22,
+              maxChildSize: 0.94,
+              builder: (context, scrollController) {
+                return Container(
+                  decoration: BoxDecoration(
+                    color: AgapColors.pageBackground,
+                    borderRadius: const BorderRadius.vertical(
+                      top: Radius.circular(22),
+                    ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.12),
+                        blurRadius: 24,
+                        offset: const Offset(0, -4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    children: [
+                      const SizedBox(height: 10),
+                      Container(
+                        width: 40,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: AgapColors.borderSubtle,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                      Expanded(
+                        child: RefreshIndicator(
+                          color: _findJobsPurple,
+                          onRefresh: () => _load(refreshUserPosition: true),
+                          child: ListView(
+                            controller: scrollController,
+                            physics: const AlwaysScrollableScrollPhysics(),
+                            padding: EdgeInsets.fromLTRB(
+                              20,
+                              12,
+                              20,
+                              listBottomPad,
+                            ),
+                            children: [
               Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -299,8 +631,10 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
                     return _Chip(
                       label: spec.label,
                       selected: selected,
-                      onTap: () =>
-                          setState(() => _selectedCategoryKey = spec.key),
+                      onTap: () {
+                        setState(() => _selectedCategoryKey = spec.key);
+                        _load();
+                      },
                     );
                   },
                   separatorBuilder: (_, __) => const SizedBox(width: 8),
@@ -399,11 +733,111 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
                     ),
                   );
                 }),
-            ],
-          ),
-        ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+        );
+      },
     );
   }
+}
+
+class _FindJobsMapFab extends StatelessWidget {
+  const _FindJobsMapFab({required this.icon, required this.onPressed});
+
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 3,
+      shadowColor: Colors.black26,
+      shape: const CircleBorder(),
+      color: Colors.white,
+      child: InkWell(
+        customBorder: const CircleBorder(),
+        onTap: onPressed,
+        child: SizedBox(
+          width: 46,
+          height: 46,
+          child: Icon(icon, color: AgapColors.primary, size: 22),
+        ),
+      ),
+    );
+  }
+}
+
+class _FindJobsMapPin extends StatelessWidget {
+  const _FindJobsMapPin({required this.gig});
+
+  final Gig gig;
+
+  @override
+  Widget build(BuildContext context) {
+    final hourly = _mapHourlyPhp(gig);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(10),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.12),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
+              ),
+            ],
+          ),
+          child: Text(
+            '₱${hourly.toStringAsFixed(0)}/hr',
+            style: GoogleFonts.inter(
+              fontWeight: FontWeight.w800,
+              fontSize: 13,
+              color: AgapColors.primaryBright,
+            ),
+          ),
+        ),
+        const SizedBox(height: 2),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: const BoxDecoration(
+            color: AgapColors.primary,
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            _mapCategoryIcon(gig.category),
+            color: Colors.white,
+            size: 18,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+double _mapHourlyPhp(Gig g) {
+  var hours = g.endAt.difference(g.startAt).inMinutes / 60.0;
+  if (hours < 0.25) hours = 8.0;
+  return (g.pay.amount / 100.0) / hours;
+}
+
+IconData _mapCategoryIcon(String c) {
+  final l = c.toLowerCase();
+  if (l.contains('warehouse')) return Icons.inventory_2_rounded;
+  if (l.contains('food')) return Icons.restaurant_rounded;
+  if (l.contains('retail')) return Icons.storefront_rounded;
+  return Icons.work_rounded;
 }
 
 class _CategorySpec {
@@ -711,6 +1145,13 @@ class _JobCard extends StatelessWidget {
                   spacing: 8,
                   runSpacing: 8,
                   children: [
+                    if (gig.isBoostedActive)
+                      const _Pill(
+                        text: 'Boosted',
+                        bg: Color(0xFFEDE9FE),
+                        fg: Color(0xFF5B21B6),
+                        icon: Icons.rocket_launch_rounded,
+                      ),
                     if (urgent)
                       const _Pill(
                         text: 'Urgent',

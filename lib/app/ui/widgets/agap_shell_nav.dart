@@ -15,17 +15,27 @@ class AgapShellDestination {
   final String label;
 }
 
+enum AgapShellNavVariant {
+  /// Rounded pill behind icon + brand green accent (default).
+  standard,
+
+  /// Circular light-blue highlight + blue icon/label (worker dashboard mock).
+  worker,
+}
+
 class AgapShellNavBar extends StatelessWidget {
   const AgapShellNavBar({
     super.key,
     required this.selectedIndex,
     required this.onSelect,
     required this.destinations,
+    this.variant = AgapShellNavVariant.standard,
   });
 
   final int selectedIndex;
   final ValueChanged<int> onSelect;
   final List<AgapShellDestination> destinations;
+  final AgapShellNavVariant variant;
 
   @override
   Widget build(BuildContext context) {
@@ -46,6 +56,7 @@ class AgapShellNavBar extends StatelessWidget {
                     icon: destinations[i].icon,
                     selectedIcon: destinations[i].selectedIcon,
                     label: destinations[i].label,
+                    variant: variant,
                     onTap: () => onSelect(i),
                   ),
                 ),
@@ -63,6 +74,7 @@ class _NavCell extends StatelessWidget {
     required this.icon,
     required this.selectedIcon,
     required this.label,
+    required this.variant,
     required this.onTap,
   });
 
@@ -70,14 +82,19 @@ class _NavCell extends StatelessWidget {
   final IconData icon;
   final IconData selectedIcon;
   final String label;
+  final AgapShellNavVariant variant;
   final VoidCallback onTap;
 
   static const Duration _anim = Duration(milliseconds: 320);
 
   @override
   Widget build(BuildContext context) {
-    final accent = AgapColors.primaryBright;
+    final worker = variant == AgapShellNavVariant.worker;
+    final accent =
+        worker ? const Color(0xFF2563EB) : AgapColors.primaryBright;
     final color = selected ? accent : AgapColors.textMuted;
+    final selectedBg =
+        worker ? const Color(0xFFDBEAFE) : AgapColors.mintSurface;
 
     return Material(
       color: Colors.transparent,
@@ -96,13 +113,19 @@ class _NavCell extends StatelessWidget {
               AnimatedContainer(
                 duration: _anim,
                 curve: Curves.easeOutCubic,
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                width: worker ? 48 : null,
+                height: worker ? 48 : null,
+                padding: worker
+                    ? EdgeInsets.zero
+                    : const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  color: selected ? AgapColors.mintSurface : Colors.transparent,
-                  borderRadius: BorderRadius.circular(14),
+                  color: selected ? selectedBg : Colors.transparent,
+                  shape: worker ? BoxShape.circle : BoxShape.rectangle,
+                  borderRadius: worker ? null : BorderRadius.circular(14),
                 ),
                 child: AnimatedScale(
-                  scale: selected ? 1.06 : 1.0,
+                  scale: selected ? 1.04 : 1.0,
                   duration: _anim,
                   curve: Curves.easeOutCubic,
                   child: AnimatedSwitcher(
@@ -126,7 +149,7 @@ class _NavCell extends StatelessWidget {
                     child: Icon(
                       key: ValueKey<bool>(selected),
                       selected ? selectedIcon : icon,
-                      size: 22,
+                      size: worker ? 24 : 22,
                       color: color,
                     ),
                   ),

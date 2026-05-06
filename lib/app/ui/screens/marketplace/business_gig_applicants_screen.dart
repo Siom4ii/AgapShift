@@ -5,7 +5,6 @@ import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
 import '../../../notifications/notification_repository.dart';
 import '../../../marketplace/marketplace_repository.dart';
-import '../../../payments/payments_repository.dart';
 import '../../../profile/worker_display_names.dart';
 import '../../../ratings/mock_ratings_repository.dart';
 import '../../../session/app_actor_id.dart';
@@ -21,7 +20,6 @@ class BusinessGigApplicantsScreen extends StatefulWidget {
     super.key,
     required this.repo,
     required this.notifications,
-    required this.payments,
     required this.session,
     required this.gig,
     this.ratings,
@@ -30,7 +28,6 @@ class BusinessGigApplicantsScreen extends StatefulWidget {
 
   final MarketplaceRepository repo;
   final NotificationRepository notifications;
-  final PaymentsRepository payments;
   final SessionController session;
   final Gig gig;
   final MockRatingsRepository? ratings;
@@ -47,7 +44,6 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
   String? _error;
   Map<String, String> _displayNames = const {};
   Map<String, double> _ratingByWorker = const {};
-  bool _escrowFunded = false;
 
   static final _headerGradient = LinearGradient(
     colors: [
@@ -72,10 +68,6 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
     });
     try {
       final apps = await widget.repo.listApplicants(widget.gig.id);
-      final escrow = await widget.payments.getEscrowForGig(widget.gig.id);
-      final funded = escrow != null &&
-          (escrow.status == EscrowStatus.funded ||
-              escrow.status == EscrowStatus.held);
 
       final ids = apps.map((a) => a.workerId).toSet();
       final names = await fetchWorkerDisplayNamesById(ids);
@@ -92,7 +84,6 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
         _apps = apps;
         _displayNames = names;
         _ratingByWorker = ratings;
-        _escrowFunded = funded;
       });
     } catch (e) {
       if (!mounted) return;
@@ -105,15 +96,6 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
   Future<void> _hire(GigApplication a) async {
     final businessId = appActorId(widget.session, mockFallback: 'business');
     try {
-      final escrowFunded = await widget.payments.isEscrowFunded(widget.gig.id);
-      if (!escrowFunded) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Fund escrow before hiring.')),
-        );
-        return;
-      }
-      await widget.payments.holdEscrow(gigId: widget.gig.id);
       final result = await widget.repo.hireApplicant(
         gigId: widget.gig.id,
         applicationId: a.id,
@@ -141,25 +123,6 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Cannot hire: $e')),
-      );
-    }
-  }
-
-  Future<void> _fundEscrow() async {
-    final businessId = appActorId(widget.session, mockFallback: 'business');
-    try {
-      await widget.payments.fundEscrow(
-        gigId: widget.gig.id,
-        businessId: businessId,
-        amount: widget.gig.pay,
-      );
-      if (!mounted) return;
-      showSuccessSnackBar(context, 'Escrow funded successfully');
-      await _load();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Cannot fund escrow: $e')),
       );
     }
   }
@@ -256,8 +219,6 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
                                         shiftRepo: r,
                                         gig: widget.gig,
                                         session: widget.session,
-                                        payments: widget.payments,
-                                        repo: widget.repo,
                                       ),
                                     ),
                                   );
@@ -288,10 +249,7 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
                 offset: const Offset(0, -10),
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                  child: _EscrowCard(
-                    funded: _escrowFunded,
-                    onFund: _fundEscrow,
-                  ),
+                  child: const _OffAppPayHiringNote(),
                 ),
               ),
             ),
@@ -390,14 +348,8 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
       };
 }
 
-class _EscrowCard extends StatelessWidget {
-  const _EscrowCard({
-    required this.funded,
-    required this.onFund,
-  });
-
-  final bool funded;
-  final VoidCallback onFund;
+class _OffAppPayHiringNote extends StatelessWidget {
+  const _OffAppPayHiringNote();
 
   @override
   Widget build(BuildContext context) {
@@ -416,6 +368,7 @@ class _EscrowCard extends StatelessWidget {
         ],
       ),
       child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
             padding: const EdgeInsets.all(10),
@@ -424,7 +377,7 @@ class _EscrowCard extends StatelessWidget {
               borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(
-              Icons.account_balance_wallet_outlined,
+              Icons.handshake_outlined,
               color: AgapColors.businessGreenDeep,
               size: 22,
             ),
@@ -435,71 +388,27 @@ class _EscrowCard extends StatelessWidget {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  'Escrow',
+                  'Pay & hiring',
                   style: GoogleFonts.inter(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
                     color: AgapColors.textMuted,
                   ),
                 ),
-                const SizedBox(height: 2),
+                const SizedBox(height: 4),
                 Text(
-                  funded ? 'Funded — ready to hire' : 'Not funded',
+                  'Wages are agreed and paid directly between you and the worker '
+                  '(not through Nexora). Use attendance scans to record shift times.',
                   style: GoogleFonts.inter(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w800,
-                    color: const Color(0xFF111827),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    height: 1.35,
+                    color: const Color(0xFF334155),
                   ),
                 ),
               ],
             ),
           ),
-          if (!funded)
-            FilledButton(
-              style: FilledButton.styleFrom(
-                backgroundColor: AgapColors.businessGreenDeep,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              onPressed: onFund,
-              child: Text(
-                'Fund escrow',
-                style: GoogleFonts.inter(fontWeight: FontWeight.w800),
-              ),
-            )
-          else
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: AgapColors.businessMint,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: AgapColors.businessGreen.withValues(alpha: 0.35),
-                ),
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.check_circle_rounded,
-                    size: 18,
-                    color: AgapColors.businessGreenDeep,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Ready',
-                    style: GoogleFonts.inter(
-                      fontWeight: FontWeight.w800,
-                      color: AgapColors.businessGreenDeep,
-                      fontSize: 13,
-                    ),
-                  ),
-                ],
-              ),
-            ),
         ],
       ),
     );

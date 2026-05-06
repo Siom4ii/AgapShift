@@ -23,6 +23,7 @@ abstract class MarketplaceRepository {
     required String category,
     int? workersNeeded,
     bool isUrgent = false,
+    DateTime? boostedUntil,
   });
 
   Future<Gig?> getGig(String gigId);
@@ -30,6 +31,14 @@ abstract class MarketplaceRepository {
   Future<List<Gig>> listNearbyGigs({
     required GeoPoint center,
     required int radiusMeters,
+    int? minPayAmount,
+    String? category,
+  });
+
+  /// Every [GigStatus.open] job in product scope (e.g. region). No distance cap.
+  /// When [sortCenter] is set, results are ordered nearest-first.
+  Future<List<Gig>> listOpenJobsFeed({
+    GeoPoint? sortCenter,
     int? minPayAmount,
     String? category,
   });

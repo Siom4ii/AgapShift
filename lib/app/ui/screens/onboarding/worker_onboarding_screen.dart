@@ -15,6 +15,8 @@ import '../../widgets/kyc_upload_zone.dart';
 import 'davao_del_sur_locations.dart';
 import 'onboarding_location_widgets.dart';
 
+enum _CollegeTrack { none, undergraduate, graduate }
+
 /// 6-step worker onboarding flow with animated progress bar.
 class WorkerOnboardingScreen extends StatefulWidget {
   const WorkerOnboardingScreen({
@@ -70,57 +72,36 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
   String? _selfieStoragePath;
   bool _kycBusy = false;
 
-  // Step 4 — Resume & Skills
+  // Step 4 — Resume & Skills (short-term / quick-hire roles)
   static const _availableSkills = [
+    'Waiter / Service Crew',
+    'Sales Associate / Sales Lady',
+    'Cashier',
+    'Helper / Utility Worker',
+    'Dishwasher / Washer',
+    'Stock Clerk / Inventory Assistant',
+    'Promoter / Brand Ambassador',
     'Warehouse / Logistics',
-    'Food Service',
+    'Food Service (Kitchen)',
     'Retail / Sales',
     'Events & Promotions',
-    'Construction',
     'Delivery / Courier',
     'Cleaning / Janitorial',
-    'Security',
     'Data Entry / Admin',
     'Customer Service',
-    'Driving',
-    'Healthcare Support',
+    'Driver',
   ];
   final Set<String> _selectedSkills = {};
   final _customSkill = TextEditingController();
   final _bio = TextEditingController();
   final _workExp = TextEditingController();
-  final _education = TextEditingController();
 
-  // Step 5 — Payout
-  static const List<String> _phBanks = <String>[
-    'BDO Unibank',
-    'Bank of the Philippine Islands (BPI)',
-    'Metrobank',
-    'Land Bank of the Philippines',
-    'Philippine National Bank (PNB)',
-    'Security Bank',
-    'UnionBank of the Philippines',
-    'China Banking Corporation',
-    'RCBC (Rizal Commercial Banking Corp)',
-    'EastWest Bank',
-    'PSBank (Philippine Savings Bank)',
-    'Maybank Philippines',
-    'Maya Bank',
-    'GoTyme Bank',
-    'CIMB Bank Philippines',
-    'ING Bank Philippines',
-    'Citibank Philippines',
-    'Robinsons Bank',
-    'HSBC Philippines',
-    'Development Bank of the Philippines (DBP)',
-    'Asia United Bank (AUB)',
-    'BDO Network Bank',
-  ];
-
-  _PayoutMethod _payoutMethod = _PayoutMethod.ewallet;
-  _EWalletKind _ewalletKind = _EWalletKind.gcash;
-  String? _bankName;
-  final _payoutAccount = TextEditingController();
+  // Step 5 — Education
+  final _elemSchool = TextEditingController();
+  final _hsSchool = TextEditingController();
+  final _shsSchool = TextEditingController();
+  _CollegeTrack _collegeTrack = _CollegeTrack.none;
+  final _collegeCourse = TextEditingController();
 
   @override
   void initState() {
@@ -159,8 +140,10 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
     _customSkill.dispose();
     _bio.dispose();
     _workExp.dispose();
-    _education.dispose();
-    _payoutAccount.dispose();
+    _elemSchool.dispose();
+    _hsSchool.dispose();
+    _shsSchool.dispose();
+    _collegeCourse.dispose();
     super.dispose();
   }
 
@@ -192,7 +175,7 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
       case 3:
         return _selectedSkills.isNotEmpty;
       case 4:
-        return _isPayoutValid();
+        return _educationStepValid();
       case 5:
         return true;
       default:
@@ -208,32 +191,29 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
         RegExp(r'^[0-9]+$').hasMatch(t);
   }
 
-  /// PH bank account: digits only, 10–19 chars (covers BDO/BPI/Metrobank/etc).
-  bool _isValidBankAccount(String value) {
-    final t = value.trim();
-    return t.length >= 10 && t.length <= 19 && RegExp(r'^[0-9]+$').hasMatch(t);
+  bool _educationStepValid() {
+    bool filled(String s) => s.trim().isNotEmpty;
+    if (!filled(_elemSchool.text) ||
+        !filled(_hsSchool.text) ||
+        !filled(_shsSchool.text)) {
+      return false;
+    }
+    if (_collegeTrack == _CollegeTrack.none) return true;
+    return filled(_collegeCourse.text);
   }
 
-  bool _isPayoutValid() {
-    switch (_payoutMethod) {
-      case _PayoutMethod.ewallet:
-        return _isValidPhMobile(_payoutAccount.text);
-      case _PayoutMethod.bank:
-        return _bankName != null && _isValidBankAccount(_payoutAccount.text);
-    }
-  }
-
-  String _payoutSummary() {
-    final acct = _payoutAccount.text.trim();
-    switch (_payoutMethod) {
-      case _PayoutMethod.ewallet:
-        return acct.isEmpty
-            ? _ewalletKind.label
-            : '${_ewalletKind.label} · $acct';
-      case _PayoutMethod.bank:
-        final b = _bankName ?? 'Bank';
-        return acct.isEmpty ? b : '$b · $acct';
-    }
+  String _educationReviewSummary() {
+    final college = switch (_collegeTrack) {
+      _CollegeTrack.none => 'College: None',
+      _CollegeTrack.undergraduate =>
+        'College (Undergraduate): ${_collegeCourse.text.trim()}',
+      _CollegeTrack.graduate =>
+        'College (Graduate): ${_collegeCourse.text.trim()}',
+    };
+    return 'Elementary: ${_elemSchool.text.trim()}\n'
+        'High school: ${_hsSchool.text.trim()}\n'
+        'Senior high: ${_shsSchool.text.trim()}\n'
+        '$college';
   }
 
   String get _stepTitle {
@@ -245,9 +225,9 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
       case 2:
         return 'Identity Verification';
       case 3:
-        return 'Resume & Skills';
+        return 'Skills & Experience';
       case 4:
-        return 'Payout Setup';
+        return 'Education';
       case 5:
         return 'Review';
       default:
@@ -368,15 +348,15 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
         'skills': _selectedSkills.toList(),
         'bio': _bio.text.trim(),
         'work_experience': _workExp.text.trim(),
-        'education': _education.text.trim(),
       };
     }
     if (completedStep >= 4) {
-      m['payout'] = {
-        'method': _payoutMethod.name,
-        'ewallet_kind': _ewalletKind.name,
-        'bank_name': _bankName,
-        'account': _payoutAccount.text.trim(),
+      m['education'] = {
+        'elementary_school': _elemSchool.text.trim(),
+        'high_school': _hsSchool.text.trim(),
+        'senior_high_school': _shsSchool.text.trim(),
+        'college_track': _collegeTrack.name,
+        'college_course': _collegeCourse.text.trim(),
       };
     }
     return m;
@@ -801,7 +781,6 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
           customSkill: _customSkill,
           bio: _bio,
           workExp: _workExp,
-          education: _education,
           onToggle: (s) => setState(() {
             if (_selectedSkills.contains(s)) {
               _selectedSkills.remove(s);
@@ -813,32 +792,16 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
           onRemoveCustomSkill: (s) => setState(() => _selectedSkills.remove(s)),
         );
       case 4:
-        return _PayoutStep(
-          method: _payoutMethod,
-          ewalletKind: _ewalletKind,
-          bankName: _bankName,
-          account: _payoutAccount,
-          onChangeMethod: (m) => setState(() {
-            _payoutMethod = m;
-            _payoutAccount.clear();
+        return _EducationStep(
+          elementary: _elemSchool,
+          highSchool: _hsSchool,
+          seniorHigh: _shsSchool,
+          collegeCourse: _collegeCourse,
+          collegeTrack: _collegeTrack,
+          onCollegeTrack: (t) => setState(() {
+            _collegeTrack = t;
+            if (t == _CollegeTrack.none) _collegeCourse.clear();
           }),
-          onChangeEWalletKind: (k) => setState(() {
-            _ewalletKind = k;
-            _payoutAccount.clear();
-          }),
-          onPickBank: () async {
-            final picked = await showLocationOptionPicker(
-              context: context,
-              title: 'Select Bank',
-              options: _phBanks,
-              selected: _bankName,
-            );
-            if (picked == null) return;
-            setState(() {
-              _bankName = picked;
-              _payoutAccount.clear();
-            });
-          },
           onChanged: () => setState(() {}),
         );
       case 5:
@@ -848,7 +811,7 @@ class _WorkerOnboardingScreenState extends State<WorkerOnboardingScreen> {
           phone: _phone.text.trim(),
           address: _address.text.trim(),
           skills: _selectedSkills,
-          payoutSummary: _payoutSummary(),
+          educationSummary: _educationReviewSummary(),
         );
       default:
         return const SizedBox.shrink();
@@ -1442,7 +1405,6 @@ class _ResumeSkillsStep extends StatelessWidget {
     required this.customSkill,
     required this.bio,
     required this.workExp,
-    required this.education,
     required this.onToggle,
     required this.onAddCustomSkill,
     required this.onRemoveCustomSkill,
@@ -1453,7 +1415,6 @@ class _ResumeSkillsStep extends StatelessWidget {
   final TextEditingController customSkill;
   final TextEditingController bio;
   final TextEditingController workExp;
-  final TextEditingController education;
   final void Function(String) onToggle;
   final VoidCallback onAddCustomSkill;
   final void Function(String) onRemoveCustomSkill;
@@ -1545,12 +1506,92 @@ class _ResumeSkillsStep extends StatelessWidget {
           hint: 'List your previous jobs…',
           maxLines: 3,
         ),
-        const SizedBox(height: 16),
-        const _FieldLabel('Education'),
-        _RoundedField(
-          controller: education,
-          hint: 'e.g., BS Business Administration',
+      ],
+    );
+  }
+}
+
+class _EducationStep extends StatelessWidget {
+  const _EducationStep({
+    required this.elementary,
+    required this.highSchool,
+    required this.seniorHigh,
+    required this.collegeCourse,
+    required this.collegeTrack,
+    required this.onCollegeTrack,
+    required this.onChanged,
+  });
+
+  final TextEditingController elementary;
+  final TextEditingController highSchool;
+  final TextEditingController seniorHigh;
+  final TextEditingController collegeCourse;
+  final _CollegeTrack collegeTrack;
+  final ValueChanged<_CollegeTrack> onCollegeTrack;
+  final VoidCallback onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const _StepIcon(icon: Icons.school_outlined),
+        const SizedBox(height: 12),
+        _StepCaption(
+          'Enter your schools (use “None” if not applicable)',
         ),
+        const SizedBox(height: 18),
+        const _FieldLabel('Elementary school'),
+        _RoundedField(
+          controller: elementary,
+          hint: 'School name or None',
+          onChanged: (_) => onChanged(),
+        ),
+        const SizedBox(height: 14),
+        const _FieldLabel('High school'),
+        _RoundedField(
+          controller: highSchool,
+          hint: 'School name or None',
+          onChanged: (_) => onChanged(),
+        ),
+        const SizedBox(height: 14),
+        const _FieldLabel('Senior high school'),
+        _RoundedField(
+          controller: seniorHigh,
+          hint: 'School name or None',
+          onChanged: (_) => onChanged(),
+        ),
+        const SizedBox(height: 14),
+        const _FieldLabel('College'),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: [
+            ChoiceChip(
+              label: const Text('Not attending / N/A'),
+              selected: collegeTrack == _CollegeTrack.none,
+              onSelected: (_) => onCollegeTrack(_CollegeTrack.none),
+            ),
+            ChoiceChip(
+              label: const Text('Undergraduate'),
+              selected: collegeTrack == _CollegeTrack.undergraduate,
+              onSelected: (_) => onCollegeTrack(_CollegeTrack.undergraduate),
+            ),
+            ChoiceChip(
+              label: const Text('Graduate'),
+              selected: collegeTrack == _CollegeTrack.graduate,
+              onSelected: (_) => onCollegeTrack(_CollegeTrack.graduate),
+            ),
+          ],
+        ),
+        if (collegeTrack != _CollegeTrack.none) ...[
+          const SizedBox(height: 12),
+          _RoundedField(
+            controller: collegeCourse,
+            hint: 'Course / program',
+            onChanged: (_) => onChanged(),
+          ),
+        ],
       ],
     );
   }
@@ -1654,361 +1695,6 @@ class _SkillChip extends StatelessWidget {
   }
 }
 
-// ---------- Step 5: Payout ----------
-
-enum _PayoutMethod { ewallet, bank }
-
-extension _PayoutMethodInfo on _PayoutMethod {
-  String get label => switch (this) {
-    _PayoutMethod.ewallet => 'E-wallet',
-    _PayoutMethod.bank => 'Bank',
-  };
-
-  String get description => switch (this) {
-    _PayoutMethod.ewallet => 'GCash or Maya',
-    _PayoutMethod.bank => 'Local bank account',
-  };
-
-  IconData get icon => switch (this) {
-    _PayoutMethod.ewallet => Icons.account_balance_wallet_rounded,
-    _PayoutMethod.bank => Icons.account_balance_rounded,
-  };
-
-  Color get color => switch (this) {
-    _PayoutMethod.ewallet => const Color(0xFF1ABC4F),
-    _PayoutMethod.bank => const Color(0xFF334155),
-  };
-}
-
-enum _EWalletKind { gcash, maya }
-
-extension _EWalletKindInfo on _EWalletKind {
-  String get label => switch (this) {
-    _EWalletKind.gcash => 'GCash',
-    _EWalletKind.maya => 'Maya',
-  };
-
-  Color get color => switch (this) {
-    _EWalletKind.gcash => const Color(0xFF1ABC4F),
-    _EWalletKind.maya => const Color(0xFF2563EB),
-  };
-}
-
-class _PayoutStep extends StatelessWidget {
-  const _PayoutStep({
-    required this.method,
-    required this.ewalletKind,
-    required this.bankName,
-    required this.account,
-    required this.onChangeMethod,
-    required this.onChangeEWalletKind,
-    required this.onPickBank,
-    required this.onChanged,
-  });
-
-  final _PayoutMethod method;
-  final _EWalletKind ewalletKind;
-  final String? bankName;
-  final TextEditingController account;
-  final void Function(_PayoutMethod) onChangeMethod;
-  final void Function(_EWalletKind) onChangeEWalletKind;
-  final VoidCallback onPickBank;
-  final VoidCallback onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const _StepIcon(icon: Icons.credit_card_rounded),
-        const SizedBox(height: 12),
-        _StepCaption('Set up how you want to receive your earnings'),
-        const SizedBox(height: 22),
-        const _FieldLabel('Payout Method'),
-        Row(
-          children: [
-            for (final m in _PayoutMethod.values) ...[
-              Expanded(
-                child: _PayoutMethodCard(
-                  method: m,
-                  selected: method == m,
-                  onTap: () => onChangeMethod(m),
-                ),
-              ),
-              if (m != _PayoutMethod.values.last) const SizedBox(width: 10),
-            ],
-          ],
-        ),
-        const SizedBox(height: 18),
-        if (method == _PayoutMethod.ewallet) ...[
-          const _FieldLabel('E-wallet Provider'),
-          Row(
-            children: [
-              for (final k in _EWalletKind.values) ...[
-                Expanded(
-                  child: _EWalletKindCard(
-                    kind: k,
-                    selected: ewalletKind == k,
-                    onTap: () => onChangeEWalletKind(k),
-                  ),
-                ),
-                if (k != _EWalletKind.values.last) const SizedBox(width: 10),
-              ],
-            ],
-          ),
-          const SizedBox(height: 16),
-          _FieldLabel('${ewalletKind.label} Number'),
-          _PhoneField(controller: account, onChanged: onChanged),
-        ] else ...[
-          const           _FieldLabel('Bank'),
-          OnboardingLocationSelectField(
-            value: bankName,
-            hint: 'Select your bank',
-            enabled: true,
-            icon: Icons.account_balance_rounded,
-            onTap: onPickBank,
-          ),
-          const SizedBox(height: 16),
-          const _FieldLabel('Account Number'),
-          _BankAccountField(
-            controller: account,
-            enabled: bankName != null,
-            onChanged: onChanged,
-          ),
-        ],
-        const SizedBox(height: 14),
-        Container(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-          decoration: BoxDecoration(
-            color: AgapColors.brandWordmarkBlue.withValues(alpha: 0.06),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(
-                    Icons.lock_rounded,
-                    size: 16,
-                    color: AgapColors.brandWordmarkBlue,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Secure & Fast Payouts',
-                    style: GoogleFonts.inter(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                      color: AgapColors.brandWordmarkBlue,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Earnings are processed within 24 hours after shift completion. Withdrawals are free.',
-                style: GoogleFonts.inter(
-                  fontSize: 12.5,
-                  height: 1.4,
-                  color: AgapColors.brandWordmarkBlue.withValues(alpha: 0.85),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// Top-level "E-wallet vs Bank" card. Same look as the previous payout cards.
-class _PayoutMethodCard extends StatelessWidget {
-  const _PayoutMethodCard({
-    required this.method,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final _PayoutMethod method;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: selected
-          ? AgapColors.brandWordmarkBlue.withValues(alpha: 0.06)
-          : Colors.white,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: selected
-                  ? AgapColors.brandWordmarkBlue
-                  : const Color(0xFFE2E8F0),
-              width: selected ? 1.6 : 1,
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(method.icon, color: method.color, size: 26),
-              const SizedBox(height: 6),
-              Text(
-                method.label,
-                style: GoogleFonts.inter(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: const Color(0xFF0F172A),
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                method.description,
-                textAlign: TextAlign.center,
-                style: GoogleFonts.inter(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF64748B),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Sub-card for choosing GCash or Maya inside the e-wallet branch.
-class _EWalletKindCard extends StatelessWidget {
-  const _EWalletKindCard({
-    required this.kind,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final _EWalletKind kind;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: selected ? kind.color.withValues(alpha: 0.10) : Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: selected ? kind.color : const Color(0xFFE2E8F0),
-              width: selected ? 1.6 : 1,
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 26,
-                height: 26,
-                decoration: BoxDecoration(
-                  color: kind.color.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  Icons.account_balance_wallet_rounded,
-                  color: kind.color,
-                  size: 16,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                kind.label,
-                style: GoogleFonts.inter(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w900,
-                  color: selected ? kind.color : const Color(0xFF0F172A),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Bank-account field: digits-only, length 10–19, with inline validation.
-class _BankAccountField extends StatelessWidget {
-  const _BankAccountField({
-    required this.controller,
-    required this.enabled,
-    required this.onChanged,
-  });
-
-  final TextEditingController controller;
-  final bool enabled;
-  final VoidCallback onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final raw = controller.text;
-    String? errorText;
-    if (!enabled) {
-      errorText = null;
-    } else if (raw.isNotEmpty) {
-      if (raw.length < 10) {
-        errorText = 'Account number must be 10–19 digits (${raw.length}/10)';
-      } else if (raw.length > 19) {
-        errorText = 'Maximum 19 digits';
-      }
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Opacity(
-          opacity: enabled ? 1.0 : 0.55,
-          child: IgnorePointer(
-            ignoring: !enabled,
-            child: _RoundedField(
-              controller: controller,
-              hint: enabled ? '1234567890' : 'Pick a bank first',
-              keyboardType: TextInputType.number,
-              maxLength: 19,
-              inputFormatters: <TextInputFormatter>[
-                FilteringTextInputFormatter.digitsOnly,
-                LengthLimitingTextInputFormatter(19),
-              ],
-              onChanged: (_) => onChanged(),
-            ),
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          errorText ?? 'Digits only. Most PH banks use 10–16 digits.',
-          style: GoogleFonts.inter(
-            fontSize: 11.5,
-            fontWeight: errorText != null ? FontWeight.w700 : FontWeight.w600,
-            color: errorText != null
-                ? const Color(0xFFEF4444)
-                : const Color(0xFF94A3B8),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
 // ---------- Step 6: Review ----------
 
 class _ReviewStep extends StatelessWidget {
@@ -2018,7 +1704,7 @@ class _ReviewStep extends StatelessWidget {
     required this.phone,
     required this.address,
     required this.skills,
-    required this.payoutSummary,
+    required this.educationSummary,
   });
 
   final String email;
@@ -2026,7 +1712,7 @@ class _ReviewStep extends StatelessWidget {
   final String phone;
   final String address;
   final Set<String> skills;
-  final String payoutSummary;
+  final String educationSummary;
 
   @override
   Widget build(BuildContext context) {
@@ -2087,7 +1773,7 @@ class _ReviewStep extends StatelessWidget {
                 value: skills.isEmpty ? '—' : skills.take(3).join(', '),
               ),
               const _Divider(),
-              _ReviewRow(label: 'Payout', value: payoutSummary),
+              _ReviewRow(label: 'Education', value: educationSummary),
             ],
           ),
         ),

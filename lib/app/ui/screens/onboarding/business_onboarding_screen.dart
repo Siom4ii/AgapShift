@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -13,6 +13,7 @@ import '../../../session/session_models.dart';
 import '../../../supabase/supabase_config.dart';
 import '../../theme/agap_colors.dart';
 import '../../widgets/kyc_upload_zone.dart';
+import '../../input/philippine_tin.dart';
 import 'davao_del_sur_locations.dart';
 import 'onboarding_location_widgets.dart';
 import 'pinnable_business_map.dart';
@@ -31,8 +32,7 @@ import 'pinnable_business_map.dart';
 ///               authorized representative title, SEC Certificate of
 ///               Incorporation, Mayor's permit, Secretary's certificate.
 ///   Step 4: Location Setup (address, map pin, contact phone)
-///   Step 5: Payment Setup (GCash / Maya / Bank)
-///   Step 6: Review + submit
+///   Step 5: Review + submit (worker pay is off-app)
 ///
 /// Uses the same slide-and-fade transition + cascading element animation as
 /// the worker side, with the brand green accent (no orange).
@@ -64,7 +64,7 @@ const Color _mintBg = AgapColors.mintSurface; // 0xFFE8F5EF
 const Color _mintSoft = AgapColors.mintSoft; // 0xFFB8E0D2
 
 class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
-  static const _totalSteps = 6;
+  static const _totalSteps = 5;
 
   int _step = 0;
   int _direction = 1; // +1 forward, -1 backward
@@ -126,37 +126,6 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
   double? _locationLng;
   final _phone = TextEditingController();
 
-  // Step 5 — Payment / payout (mirrors worker onboarding `_PayoutStep`)
-  static const List<String> _phBanks = <String>[
-    'BDO Unibank',
-    'Bank of the Philippine Islands (BPI)',
-    'Metrobank',
-    'Land Bank of the Philippines',
-    'Philippine National Bank (PNB)',
-    'Security Bank',
-    'UnionBank of the Philippines',
-    'China Banking Corporation',
-    'RCBC (Rizal Commercial Banking Corp)',
-    'EastWest Bank',
-    'PSBank (Philippine Savings Bank)',
-    'Maybank Philippines',
-    'Maya Bank',
-    'GoTyme Bank',
-    'CIMB Bank Philippines',
-    'ING Bank Philippines',
-    'Citibank Philippines',
-    'Robinsons Bank',
-    'HSBC Philippines',
-    'Development Bank of the Philippines (DBP)',
-    'Asia United Bank (AUB)',
-    'BDO Network Bank',
-  ];
-
-  _BizPayMethod _payMethod = _BizPayMethod.ewallet;
-  _BizEWallet _eWallet = _BizEWallet.gcash;
-  String? _payBankName;
-  final _payAccount = TextEditingController();
-
   @override
   void initState() {
     super.initState();
@@ -196,22 +165,7 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
     _authorizedRepTitle.dispose();
     _streetDetail.dispose();
     _phone.dispose();
-    _payAccount.dispose();
     super.dispose();
-  }
-
-  /// Same PH-mobile rule as worker payout: 11 digits starting with `09`.
-  bool _isValidPhMobile(String value) {
-    final t = value.trim();
-    return t.length == 11 &&
-        t.startsWith('09') &&
-        RegExp(r'^[0-9]+$').hasMatch(t);
-  }
-
-  /// PH bank account: digits only, 10–19 chars (same as worker onboarding).
-  bool _isValidBankAccount(String value) {
-    final t = value.trim();
-    return t.length >= 10 && t.length <= 19 && RegExp(r'^[0-9]+$').hasMatch(t);
   }
 
   LatLng? get _locationPin =>
@@ -276,17 +230,6 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
     setState(() => _locationBarangay = picked);
   }
 
-  String _paymentSummary() {
-    final acct = _payAccount.text.trim();
-    switch (_payMethod) {
-      case _BizPayMethod.ewallet:
-        return acct.isEmpty ? _eWallet.label : '${_eWallet.label} · $acct';
-      case _BizPayMethod.bank:
-        final b = _payBankName ?? 'Bank';
-        return acct.isEmpty ? b : '$b · $acct';
-    }
-  }
-
   /// Display name of the business based on the selected kind. Used by the
   /// review step + the submission slug fallback.
   String get _displayBusinessName {
@@ -325,14 +268,6 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
             _locationLng != null &&
             _isValidContactPhone(_phone.text);
       case 4:
-        switch (_payMethod) {
-          case _BizPayMethod.ewallet:
-            return _isValidPhMobile(_payAccount.text);
-          case _BizPayMethod.bank:
-            return _payBankName != null &&
-                _isValidBankAccount(_payAccount.text);
-        }
-      case 5:
         return true;
       default:
         return false;
@@ -348,7 +283,7 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
       case _BusinessKind.soleProprietorship:
         return nonEmpty(_ownerLegalName) &&
             nonEmpty(_tradeName) &&
-            nonEmpty(_tin) &&
+            isPhilippineTinComplete(_tin.text) &&
             _dtiCertFile != null &&
             _mayorPermitFile != null &&
             _ownerGovIdFile != null;
@@ -388,8 +323,6 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
       case 3:
         return 'Location Setup';
       case 4:
-        return 'Payment Setup';
-      case 5:
         return 'Review';
       default:
         return '';
@@ -462,7 +395,7 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
     if (!SupabaseConfig.isConfigured) return;
     try {
       await SupabaseOnboardingSync.saveBusiness(
-        _buildBusinessPayload(completedStep: 5),
+        _buildBusinessPayload(completedStep: 4),
       );
     } catch (_) {}
   }
@@ -564,14 +497,6 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
         'phone': _phone.text.trim(),
       };
     }
-    if (completedStep >= 4) {
-      m['payment'] = {
-        'method': _payMethod.name,
-        'ewallet': _eWallet.name,
-        'bank_name': _payBankName,
-        'account': _payAccount.text.trim(),
-      };
-    }
     return m;
   }
 
@@ -592,7 +517,7 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
     if (SupabaseConfig.isConfigured) {
       await SupabaseOnboardingSync.syncProfileIdentitySnapshot(
         flow: 'business',
-        snapshot: _buildBusinessPayload(completedStep: 5),
+        snapshot: _buildBusinessPayload(completedStep: 4),
       );
     }
     if (!mounted) return;
@@ -940,32 +865,10 @@ class _BusinessOnboardingScreenState extends State<BusinessOnboardingScreen> {
           onChanged: () => setState(() {}),
         );
       case 4:
-        return _PaymentStep(
-          method: _payMethod,
-          eWallet: _eWallet,
-          bankName: _payBankName,
-          account: _payAccount,
-          banks: _phBanks,
-          onChangeMethod: (m) => setState(() {
-            _payMethod = m;
-            _payAccount.clear();
-          }),
-          onChangeEWallet: (k) => setState(() {
-            _eWallet = k;
-            _payAccount.clear();
-          }),
-          onChangeBank: (b) => setState(() {
-            _payBankName = b;
-            _payAccount.clear();
-          }),
-          onChanged: () => setState(() {}),
-        );
-      case 5:
         return _ReviewStep(
           email: _email.text.trim(),
           kind: _kind,
           businessName: _displayBusinessName,
-          paymentSummary: _paymentSummary(),
         );
       default:
         return const SizedBox.shrink();
@@ -1449,10 +1352,18 @@ class _BusinessDetailsStep extends StatelessWidget {
             hint: '000-000-000-000',
             keyboardType: TextInputType.number,
             inputFormatters: <TextInputFormatter>[
-              FilteringTextInputFormatter.allow(RegExp(r'[0-9-]')),
-              LengthLimitingTextInputFormatter(15),
+              PhilippineTinInputFormatter(),
             ],
             onChanged: (_) => onChanged(),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            '12 digits in the format ###-###-###-###',
+            style: GoogleFonts.inter(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w600,
+              color: const Color(0xFF94A3B8),
+            ),
           ),
           const SizedBox(height: 18),
           _DocumentUploadTile(
@@ -1774,658 +1685,6 @@ class _LocationStep extends StatelessWidget {
   }
 }
 
-// ---------- Step 5: Payment ----------
-// Same layout as worker onboarding `_PayoutStep`: top-level **E-wallet vs
-// Bank**, then either GCash/Maya + mobile number, or bank + account number,
-// plus the informational callout — here tinted with the business green brand.
-
-enum _BizPayMethod { ewallet, bank }
-
-extension _BizPayMethodInfo on _BizPayMethod {
-  String get label => switch (this) {
-    _BizPayMethod.ewallet => 'E-wallet',
-    _BizPayMethod.bank => 'Bank',
-  };
-
-  String get description => switch (this) {
-    _BizPayMethod.ewallet => 'GCash or Maya',
-    _BizPayMethod.bank => 'Local bank account',
-  };
-
-  IconData get icon => switch (this) {
-    _BizPayMethod.ewallet => Icons.account_balance_wallet_rounded,
-    _BizPayMethod.bank => Icons.account_balance_rounded,
-  };
-
-  Color get color => switch (this) {
-    _BizPayMethod.ewallet => const Color(0xFF1ABC4F),
-    _BizPayMethod.bank => const Color(0xFF334155),
-  };
-}
-
-enum _BizEWallet { gcash, maya }
-
-extension _BizEWalletInfo on _BizEWallet {
-  String get label => switch (this) {
-    _BizEWallet.gcash => 'GCash',
-    _BizEWallet.maya => 'Maya',
-  };
-
-  Color get color => switch (this) {
-    _BizEWallet.gcash => const Color(0xFF1ABC4F),
-    _BizEWallet.maya => const Color(0xFF2563EB),
-  };
-}
-
-class _PaymentStep extends StatelessWidget {
-  const _PaymentStep({
-    required this.method,
-    required this.eWallet,
-    required this.bankName,
-    required this.account,
-    required this.banks,
-    required this.onChangeMethod,
-    required this.onChangeEWallet,
-    required this.onChangeBank,
-    required this.onChanged,
-  });
-
-  final _BizPayMethod method;
-  final _BizEWallet eWallet;
-  final String? bankName;
-  final TextEditingController account;
-  final List<String> banks;
-  final void Function(_BizPayMethod) onChangeMethod;
-  final void Function(_BizEWallet) onChangeEWallet;
-  final ValueChanged<String> onChangeBank;
-  final VoidCallback onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        const _StepIcon(icon: Icons.credit_card_rounded),
-        const SizedBox(height: 12),
-        _StepCaption('Set up how you fund worker payments'),
-        const SizedBox(height: 22),
-        const _FieldLabel('Payout Method'),
-        Row(
-          children: [
-            for (final m in _BizPayMethod.values) ...[
-              Expanded(
-                child: _BizPayMethodCard(
-                  method: m,
-                  selected: method == m,
-                  onTap: () => onChangeMethod(m),
-                ),
-              ),
-              if (m != _BizPayMethod.values.last) const SizedBox(width: 10),
-            ],
-          ],
-        ),
-        const SizedBox(height: 18),
-        if (method == _BizPayMethod.ewallet) ...[
-          const _FieldLabel('E-wallet Provider'),
-          Row(
-            children: [
-              for (final k in _BizEWallet.values) ...[
-                Expanded(
-                  child: _BizEWalletCard(
-                    kind: k,
-                    selected: eWallet == k,
-                    onTap: () => onChangeEWallet(k),
-                  ),
-                ),
-                if (k != _BizEWallet.values.last) const SizedBox(width: 10),
-              ],
-            ],
-          ),
-          const SizedBox(height: 16),
-          _FieldLabel('${eWallet.label} Number'),
-          _PaymentPhoneField(controller: account, onChanged: onChanged),
-        ] else ...[
-          const _FieldLabel('Bank'),
-          _BankSelectField(
-            banks: banks,
-            value: bankName,
-            onChanged: onChangeBank,
-          ),
-          const SizedBox(height: 16),
-          const _FieldLabel('Account Number'),
-          _PaymentBankAccountField(
-            controller: account,
-            enabled: bankName != null,
-            onChanged: onChanged,
-          ),
-        ],
-        const SizedBox(height: 14),
-        Container(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-          decoration: BoxDecoration(
-            color: _brandGreen.withValues(alpha: 0.06),
-            borderRadius: BorderRadius.circular(14),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.lock_rounded, size: 16, color: _brandGreen),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Secure & Fast Payouts',
-                    style: GoogleFonts.inter(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                      color: _brandGreenDark,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 4),
-              Text(
-                'Earnings are processed within 24 hours after shift completion. '
-                'Withdrawals are free.',
-                style: GoogleFonts.inter(
-                  fontSize: 12.5,
-                  height: 1.4,
-                  color: _brandGreenDark.withValues(alpha: 0.85),
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _BizPayMethodCard extends StatelessWidget {
-  const _BizPayMethodCard({
-    required this.method,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final _BizPayMethod method;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: selected ? _brandGreen.withValues(alpha: 0.06) : Colors.white,
-      borderRadius: BorderRadius.circular(14),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(
-              color: selected ? _brandGreen : const Color(0xFFE2E8F0),
-              width: selected ? 1.6 : 1,
-            ),
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(method.icon, color: method.color, size: 26),
-              const SizedBox(height: 6),
-              Text(
-                method.label,
-                style: GoogleFonts.inter(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w800,
-                  color: const Color(0xFF0F172A),
-                ),
-              ),
-              const SizedBox(height: 2),
-              Text(
-                method.description,
-                textAlign: TextAlign.center,
-                style: GoogleFonts.inter(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF64748B),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BizEWalletCard extends StatelessWidget {
-  const _BizEWalletCard({
-    required this.kind,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final _BizEWallet kind;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: selected ? kind.color.withValues(alpha: 0.10) : Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: selected ? kind.color : const Color(0xFFE2E8F0),
-              width: selected ? 1.6 : 1,
-            ),
-          ),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                width: 26,
-                height: 26,
-                decoration: BoxDecoration(
-                  color: kind.color.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  Icons.account_balance_wallet_rounded,
-                  color: kind.color,
-                  size: 16,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                kind.label,
-                style: GoogleFonts.inter(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w900,
-                  color: selected ? kind.color : const Color(0xFF0F172A),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// PH mobile field — identical behavior to worker `_PhoneField`.
-class _PaymentPhoneField extends StatelessWidget {
-  const _PaymentPhoneField({required this.controller, required this.onChanged});
-
-  final TextEditingController controller;
-  final VoidCallback onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final raw = controller.text;
-    String? errorText;
-    if (raw.isNotEmpty) {
-      if (raw.length < 2) {
-        errorText = 'Must start with 09';
-      } else if (!raw.startsWith('09')) {
-        errorText = 'Must start with 09';
-      } else if (raw.length < 11) {
-        errorText = 'Phone must be 11 digits (${raw.length}/11)';
-      }
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _RoundedField(
-          controller: controller,
-          hint: '09XXXXXXXXX',
-          keyboardType: TextInputType.phone,
-          maxLength: 11,
-          inputFormatters: <TextInputFormatter>[
-            FilteringTextInputFormatter.digitsOnly,
-            LengthLimitingTextInputFormatter(11),
-          ],
-          onChanged: (_) => onChanged(),
-        ),
-        const SizedBox(height: 4),
-        if (errorText != null)
-          Text(
-            errorText,
-            style: GoogleFonts.inter(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
-              color: const Color(0xFFEF4444),
-            ),
-          )
-        else
-          Text(
-            '11 digits, must start with 09.',
-            style: GoogleFonts.inter(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w600,
-              color: const Color(0xFF94A3B8),
-            ),
-          ),
-      ],
-    );
-  }
-}
-
-class _PaymentBankAccountField extends StatelessWidget {
-  const _PaymentBankAccountField({
-    required this.controller,
-    required this.enabled,
-    required this.onChanged,
-  });
-
-  final TextEditingController controller;
-  final bool enabled;
-  final VoidCallback onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final raw = controller.text;
-    String? errorText;
-    if (!enabled) {
-      errorText = null;
-    } else if (raw.isNotEmpty) {
-      if (raw.length < 10) {
-        errorText = 'Account number must be 10–19 digits (${raw.length}/10)';
-      } else if (raw.length > 19) {
-        errorText = 'Maximum 19 digits';
-      }
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Opacity(
-          opacity: enabled ? 1.0 : 0.55,
-          child: IgnorePointer(
-            ignoring: !enabled,
-            child: _RoundedField(
-              controller: controller,
-              hint: enabled ? '1234567890' : 'Pick a bank first',
-              keyboardType: TextInputType.number,
-              maxLength: 19,
-              inputFormatters: <TextInputFormatter>[
-                FilteringTextInputFormatter.digitsOnly,
-                LengthLimitingTextInputFormatter(19),
-              ],
-              onChanged: (_) => onChanged(),
-            ),
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          errorText ?? 'Digits only. Most PH banks use 10–16 digits.',
-          style: GoogleFonts.inter(
-            fontSize: 11.5,
-            fontWeight: errorText != null ? FontWeight.w700 : FontWeight.w600,
-            color: errorText != null
-                ? const Color(0xFFEF4444)
-                : const Color(0xFF94A3B8),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-/// Dropdown-style row that opens a **height-capped** modal sheet instead of
-/// `DropdownButton`'s overlay — on some platforms that overlay expands to
-/// nearly full-screen height and hides the header / Continue button.
-class _BankSelectField extends StatelessWidget {
-  const _BankSelectField({
-    required this.banks,
-    required this.value,
-    required this.onChanged,
-  });
-
-  final List<String> banks;
-  final String? value;
-  final ValueChanged<String> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasValue = value != null && value!.isNotEmpty;
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: () async {
-          final picked = await showModalBottomSheet<String>(
-            context: context,
-            isScrollControlled: true,
-            backgroundColor: Colors.white,
-            shape: const RoundedRectangleBorder(
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-            builder: (ctx) => _BankPickerSheet(banks: banks, selected: value),
-          );
-          if (picked != null) onChanged(picked);
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
-          ),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  hasValue ? value! : 'Select your bank',
-                  style: GoogleFonts.inter(
-                    fontSize: 14,
-                    fontWeight: hasValue ? FontWeight.w700 : FontWeight.w600,
-                    color: hasValue
-                        ? const Color(0xFF0F172A)
-                        : const Color(0xFF94A3B8),
-                  ),
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 2,
-                ),
-              ),
-              const Icon(
-                Icons.keyboard_arrow_down_rounded,
-                color: Color(0xFF94A3B8),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BankPickerSheet extends StatefulWidget {
-  const _BankPickerSheet({required this.banks, required this.selected});
-
-  final List<String> banks;
-  final String? selected;
-
-  @override
-  State<_BankPickerSheet> createState() => _BankPickerSheetState();
-}
-
-class _BankPickerSheetState extends State<_BankPickerSheet> {
-  late final TextEditingController _query = TextEditingController();
-
-  @override
-  void dispose() {
-    _query.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final q = _query.text.trim().toLowerCase();
-    final filtered = q.isEmpty
-        ? widget.banks
-        : widget.banks.where((o) => o.toLowerCase().contains(q)).toList();
-
-    // Cap sheet height so the payment screen header & Continue stay visible.
-    final screenH = MediaQuery.sizeOf(context).height;
-    final maxSheetH = (screenH * 0.55).clamp(320.0, 520.0);
-
-    return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
-      child: SizedBox(
-        height: maxSheetH,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SizedBox(height: 10),
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: const Color(0xFFE2E8F0),
-                  borderRadius: BorderRadius.circular(99),
-                ),
-              ),
-            ),
-            const SizedBox(height: 14),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      'Select bank',
-                      style: GoogleFonts.inter(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                        color: const Color(0xFF0F172A),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(
-                      Icons.close_rounded,
-                      color: Color(0xFF64748B),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-              child: TextField(
-                controller: _query,
-                onChanged: (_) => setState(() {}),
-                style: GoogleFonts.inter(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: const Color(0xFF0F172A),
-                ),
-                decoration: InputDecoration(
-                  hintText: 'Search…',
-                  hintStyle: GoogleFonts.inter(
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w600,
-                    color: const Color(0xFFB6BFCB),
-                  ),
-                  prefixIcon: const Icon(
-                    Icons.search_rounded,
-                    color: Color(0xFF94A3B8),
-                  ),
-                  filled: true,
-                  fillColor: const Color(0xFFF8FAFC),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: const BorderSide(
-                      color: _brandGreen,
-                      width: 1.4,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            const Divider(height: 1, color: Color(0xFFE2E8F0)),
-            Expanded(
-              child: filtered.isEmpty
-                  ? Center(
-                      child: Text(
-                        'No results',
-                        style: GoogleFonts.inter(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w700,
-                          color: const Color(0xFF94A3B8),
-                        ),
-                      ),
-                    )
-                  : ListView.separated(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 6,
-                      ),
-                      itemCount: filtered.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 2),
-                      itemBuilder: (context, i) {
-                        final option = filtered[i];
-                        final isSelected = option == widget.selected;
-                        return ListTile(
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          tileColor: isSelected
-                              ? _brandGreen.withValues(alpha: 0.08)
-                              : null,
-                          title: Text(
-                            option,
-                            style: GoogleFonts.inter(
-                              fontSize: 14,
-                              fontWeight: isSelected
-                                  ? FontWeight.w900
-                                  : FontWeight.w700,
-                              color: isSelected
-                                  ? _brandGreen
-                                  : const Color(0xFF0F172A),
-                            ),
-                          ),
-                          trailing: isSelected
-                              ? Icon(
-                                  Icons.check_circle_rounded,
-                                  color: _brandGreen,
-                                  size: 20,
-                                )
-                              : null,
-                          onTap: () => Navigator.of(context).pop(option),
-                        );
-                      },
-                    ),
-            ),
-            const SizedBox(height: 10),
-          ],
-        ),
-      ),
-    );
-  }
-}
 
 // ---------- Step 6: Review ----------
 
@@ -2434,13 +1693,11 @@ class _ReviewStep extends StatelessWidget {
     required this.email,
     required this.kind,
     required this.businessName,
-    required this.paymentSummary,
   });
 
   final String email;
   final _BusinessKind kind;
   final String businessName;
-  final String paymentSummary;
 
   /// Per-kind label for the "business name" review row, e.g. "Trade Name"
   /// for sole props vs "Corporate Name" for corporations.
@@ -2503,8 +1760,6 @@ class _ReviewStep extends StatelessWidget {
                 label: _businessNameLabel,
                 value: businessName.isEmpty ? '—' : businessName,
               ),
-              const _Divider(),
-              _ReviewRow(label: 'Payout', value: paymentSummary),
             ],
           ),
         ),
