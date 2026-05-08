@@ -7,13 +7,14 @@ import '../../../../domain/enums.dart';
 import '../../../../domain/worker_identity.dart';
 import '../../../marketplace/marketplace_repository.dart';
 import '../../../payments/payments_repository.dart';
-import '../../../ratings/mock_ratings_repository.dart';
+import '../../../ratings/ratings_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../../shift/shift_repository.dart';
 import '../../../supabase/supabase_config.dart';
 import '../../theme/agap_colors.dart';
 import '../subscriptions/worker_subscription_screen.dart';
+import '../ratings/user_ratings_screen.dart';
 
 /// Worker profile primary blue (mock).
 const Color _kProfileBlue = Color(0xFF1A4384);
@@ -31,17 +32,19 @@ class WorkerProfileScreen extends StatefulWidget {
     required this.payments,
     this.embedded = false,
     this.onOpenMessages,
+    this.inboxUnreadCount = 0,
     this.onOpenNotifications,
     this.onLogout,
   });
 
   final SessionController session;
   final ShiftRepository shiftRepo;
-  final MockRatingsRepository ratings;
+  final RatingsRepository ratings;
   final MarketplaceRepository marketRepo;
   final PaymentsRepository payments;
   final bool embedded;
   final VoidCallback? onOpenMessages;
+  final int inboxUnreadCount;
   final VoidCallback? onOpenNotifications;
   final Future<void> Function()? onLogout;
 
@@ -288,9 +291,23 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                             clipBehavior: Clip.antiAlias,
                             child: IconButton(
                               tooltip: 'Messages',
-                              icon: const Icon(
-                                Icons.chat_bubble_outline_rounded,
-                                color: Colors.white,
+                              icon: Badge(
+                                isLabelVisible: widget.inboxUnreadCount > 0,
+                                label: Text(
+                                  widget.inboxUnreadCount > 99
+                                      ? '99+'
+                                      : '${widget.inboxUnreadCount}',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                backgroundColor: Colors.red.shade600,
+                                child: const Icon(
+                                  Icons.chat_bubble_outline_rounded,
+                                  color: Colors.white,
+                                ),
                               ),
                               onPressed: widget.onOpenMessages,
                             ),
@@ -347,13 +364,29 @@ class _WorkerProfileScreenState extends State<WorkerProfileScreen> {
                   ),
                   const SizedBox(width: 10),
                   Expanded(
-                    child: _MetricCard(
-                      iconBoxColor: const Color(0xFFFFF8E1),
-                      icon: Icons.star_rounded,
-                      iconColor: const Color(0xFFFFC107),
-                      value: hasRating ? _avg.toStringAsFixed(1) : '—',
-                      valueColor: const Color(0xFFE65100),
-                      label: 'Avg Rating',
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(18),
+                      onTap: () {
+                        final userId = appActorId(widget.session, mockFallback: '');
+                        if (userId.isEmpty) return;
+                        Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(
+                            builder: (_) => UserRatingsScreen(
+                              ratings: widget.ratings,
+                              userId: userId,
+                              title: 'My reviews',
+                            ),
+                          ),
+                        );
+                      },
+                      child: _MetricCard(
+                        iconBoxColor: const Color(0xFFFFF8E1),
+                        icon: Icons.star_rounded,
+                        iconColor: const Color(0xFFFFC107),
+                        value: hasRating ? _avg.toStringAsFixed(1) : '—',
+                        valueColor: const Color(0xFFE65100),
+                        label: 'Avg Rating',
+                      ),
                     ),
                   ),
                   const SizedBox(width: 10),

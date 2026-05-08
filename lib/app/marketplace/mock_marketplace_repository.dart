@@ -90,8 +90,10 @@ class MockMarketplaceRepository implements MarketplaceRepository {
   }) async {
     final gigs = await listGigs();
     final filtered = <_ScoredGig>[];
+    final now = DateTime.now().toUtc();
     for (final g in gigs) {
       if (g.status != GigStatus.open) continue;
+      if (!g.endAt.toUtc().isAfter(now)) continue;
       if (!DavaoDelSurScope.contains(g.location)) continue;
       if (category != null && category.isNotEmpty && g.category != category) continue;
       if (minPayAmount != null && g.pay.amount < minPayAmount) continue;
@@ -112,8 +114,10 @@ class MockMarketplaceRepository implements MarketplaceRepository {
     final gigs = await listGigs();
     final filtered = <_ScoredGig>[];
     final center = sortCenter ?? DavaoDelSurScope.defaultCenter;
+    final now = DateTime.now().toUtc();
     for (final g in gigs) {
       if (g.status != GigStatus.open) continue;
+      if (!g.endAt.toUtc().isAfter(now)) continue;
       if (!DavaoDelSurScope.contains(g.location)) continue;
       if (category != null && category.isNotEmpty && g.category != category) {
         continue;

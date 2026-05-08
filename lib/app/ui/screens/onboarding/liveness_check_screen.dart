@@ -1,8 +1,8 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 
@@ -30,6 +30,7 @@ class _LivenessCheckScreenState extends State<LivenessCheckScreen> {
   bool _busy = false;
   bool _analyzing = false;
   String? _error;
+  bool _captured = false;
 
   _FaceState _faceState = _FaceState.none;
   String _faceMessage = 'No face detected';
@@ -38,6 +39,7 @@ class _LivenessCheckScreenState extends State<LivenessCheckScreen> {
   bool _sawEyesOpen = false;
 
   Timer? _throttle;
+  Timer? _autoCaptureTimer;
 
   @override
   void initState() {
@@ -48,6 +50,7 @@ class _LivenessCheckScreenState extends State<LivenessCheckScreen> {
   @override
   void dispose() {
     _throttle?.cancel();
+    _autoCaptureTimer?.cancel();
     _camera?.dispose();
     _detector?.close();
     super.dispose();
@@ -116,15 +119,18 @@ class _LivenessCheckScreenState extends State<LivenessCheckScreen> {
       final cam = _camera;
       final detector = _detector;
       if (cam == null || detector == null) return;
+      if (_captured) return;
 
-      final bytes = _concatenatePlanes(image.planes);
+      // ML Kit expects NV21 bytes on Android for YUV420 stream frames.
+      final bytes = _yuv420ToNv21(image);
       final inputImage = InputImage.fromBytes(
         bytes: bytes,
         metadata: InputImageMetadata(
           size: Size(image.width.toDouble(), image.height.toDouble()),
-          rotation: _rotationFor(cam.description.sensorOrientation),
-          format: InputImageFormat.yuv420,
-          bytesPerRow: image.planes.first.bytesPerRow,
+          rotation: _rotationForController(cam),
+          format: InputImageFormat.nv21,
+          // For NV21 we construct a tight buffer with row stride = width.
+          bytesPerRow: image.width,
         ),
       );
 
@@ -162,6 +168,10 @@ class _LivenessCheckScreenState extends State<LivenessCheckScreen> {
       final eyesOpen = left > 0.65 && right > 0.65;
       final blinked = left < 0.25 || right < 0.25;
       final yaw = face.headEulerAngleY ?? 0.0; // +left, -right (device dependent)
+      final pitch = face.headEulerAngleX ?? 0.0;
+      final roll = face.headEulerAngleZ ?? 0.0;
+
+      _maybeScheduleAutoCapture(yaw: yaw, pitch: pitch, roll: roll);
 
       setState(() {
         // Only evaluate liveness steps when exactly one face is present.
@@ -189,16 +199,67 @@ class _LivenessCheckScreenState extends State<LivenessCheckScreen> {
     }
   }
 
-  static Uint8List _concatenatePlanes(List<Plane> planes) {
-    final all = BytesBuilder(copy: false);
-    for (final p in planes) {
-      all.add(p.bytes);
+  static Uint8List _yuv420ToNv21(CameraImage image) {
+    final yPlane = image.planes[0];
+    final uPlane = image.planes[1];
+    final vPlane = image.planes[2];
+
+    final yBytes = yPlane.bytes;
+    final uBytes = uPlane.bytes;
+    final vBytes = vPlane.bytes;
+
+    final width = image.width;
+    final height = image.height;
+    final ySize = width * height;
+    final uvSize = width * height ~/ 2;
+    final out = Uint8List(ySize + uvSize);
+
+    // Copy Y respecting rowStride (Android often pads each row).
+    final yRowStride = yPlane.bytesPerRow;
+    final yPixelStride = yPlane.bytesPerPixel ?? 1;
+    var outIndex = 0;
+    for (var row = 0; row < height; row++) {
+      var yRow = row * yRowStride;
+      for (var col = 0; col < width; col++) {
+        out[outIndex++] = yBytes[yRow + col * yPixelStride];
+      }
     }
-    return all.takeBytes();
+
+    // Interleave VU for NV21.
+    final uRowStride = uPlane.bytesPerRow;
+    final vRowStride = vPlane.bytesPerRow;
+    final uPixelStride = uPlane.bytesPerPixel ?? 1;
+    final vPixelStride = vPlane.bytesPerPixel ?? 1;
+    outIndex = ySize;
+    for (var row = 0; row < height ~/ 2; row++) {
+      final uRow = row * uRowStride;
+      final vRow = row * vRowStride;
+      for (var col = 0; col < width ~/ 2; col++) {
+        final uIndex = uRow + col * uPixelStride;
+        final vIndex = vRow + col * vPixelStride;
+        out[outIndex++] = vBytes[vIndex];
+        out[outIndex++] = uBytes[uIndex];
+      }
+    }
+
+    return out;
   }
 
-  static InputImageRotation _rotationFor(int sensorOrientation) {
-    return switch (sensorOrientation) {
+  static InputImageRotation _rotationForController(CameraController cam) {
+    final sensorOrientation = cam.description.sensorOrientation;
+    final deviceOrientation = cam.value.deviceOrientation;
+    final deviceDegrees = switch (deviceOrientation) {
+      DeviceOrientation.portraitUp => 0,
+      DeviceOrientation.landscapeLeft => 90,
+      DeviceOrientation.portraitDown => 180,
+      DeviceOrientation.landscapeRight => 270,
+    };
+
+    final rotationDegrees = cam.description.lensDirection == CameraLensDirection.front
+        ? (sensorOrientation + deviceDegrees) % 360
+        : (sensorOrientation - deviceDegrees + 360) % 360;
+
+    return switch (rotationDegrees) {
       90 => InputImageRotation.rotation90deg,
       180 => InputImageRotation.rotation180deg,
       270 => InputImageRotation.rotation270deg,
@@ -210,7 +271,7 @@ class _LivenessCheckScreenState extends State<LivenessCheckScreen> {
         _LivenessStep.blink => 'Look at the camera and blink once.',
         _LivenessStep.turnLeft => 'Turn your head to the left.',
         _LivenessStep.turnRight => 'Turn your head to the right.',
-        _LivenessStep.done => 'Great! Tap “Capture selfie”.',
+        _LivenessStep.done => 'Hold still facing the camera…',
       };
 
   double get _progress => switch (_step) {
@@ -220,9 +281,39 @@ class _LivenessCheckScreenState extends State<LivenessCheckScreen> {
         _LivenessStep.done => 1.0,
       };
 
-  bool get _canCapture => _step == _LivenessStep.done && !_busy;
-
   bool get _canProceed => _faceState == _FaceState.single;
+
+  bool get _shouldAutoCapture =>
+      _step == _LivenessStep.done && _faceState == _FaceState.single && !_busy && !_captured;
+
+  void _maybeScheduleAutoCapture({
+    required double yaw,
+    required double pitch,
+    required double roll,
+  }) {
+    // Only capture when the user holds still, facing forward.
+    if (!_shouldAutoCapture) {
+      _autoCaptureTimer?.cancel();
+      _autoCaptureTimer = null;
+      return;
+    }
+    final frontFacing = yaw.abs() < 8 && pitch.abs() < 8 && roll.abs() < 10;
+    if (!frontFacing) {
+      _autoCaptureTimer?.cancel();
+      _autoCaptureTimer = null;
+      return;
+    }
+    if (_autoCaptureTimer != null) return;
+    _autoCaptureTimer = Timer(const Duration(milliseconds: 700), () {
+      _autoCaptureTimer?.cancel();
+      _autoCaptureTimer = null;
+      if (!mounted) return;
+      if (_shouldAutoCapture) {
+        _captured = true;
+        _capture();
+      }
+    });
+  }
 
   Color get _statusColor => switch (_faceState) {
         _FaceState.single => const Color(0xFF16A34A),
@@ -251,6 +342,7 @@ class _LivenessCheckScreenState extends State<LivenessCheckScreen> {
       setState(() {
         _busy = false;
         _error = 'Could not capture selfie: $e';
+        _captured = false;
       });
       try {
         await cam.startImageStream(_onFrame);
@@ -429,36 +521,30 @@ class _LivenessCheckScreenState extends State<LivenessCheckScreen> {
                             ),
                           ),
                           const SizedBox(height: 12),
-                          FilledButton.icon(
-                            onPressed: (_canProceed && _canCapture && !_busy)
-                                ? _capture
-                                : null,
-                            style: FilledButton.styleFrom(
-                              backgroundColor: accent,
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(vertical: 14),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
+                          if (_step == _LivenessStep.done && _canProceed) ...[
+                            Center(
+                              child: Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: _busy
+                                    ? const SizedBox(
+                                        height: 22,
+                                        width: 22,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : Text(
+                                        'Auto-capturing…',
+                                        style: GoogleFonts.inter(
+                                          fontWeight: FontWeight.w800,
+                                          fontSize: 13,
+                                          color: Colors.white.withValues(alpha: 0.92),
+                                        ),
+                                      ),
                               ),
                             ),
-                            icon: const Icon(Icons.camera_alt_rounded, size: 18),
-                            label: _busy
-                                ? const SizedBox(
-                                    height: 22,
-                                    width: 22,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white,
-                                    ),
-                                  )
-                                : Text(
-                                    'Capture selfie',
-                                    style: GoogleFonts.inter(
-                                      fontWeight: FontWeight.w900,
-                                      fontSize: 14,
-                                    ),
-                                  ),
-                          ),
+                          ],
                         ],
                       ),
                     ),

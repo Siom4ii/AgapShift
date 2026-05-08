@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 
+import '../../../../domain/enums.dart';
+import '../../../../domain/models.dart';
 import '../../../location/davao_del_sur_scope.dart';
 import '../../../location/user_geo_point.dart';
 import '../../../marketplace/marketplace_repository.dart';
@@ -8,7 +10,8 @@ import '../../../marketplace/marketplace_scope.dart';
 import '../../../marketplace/worker_discovery_loader.dart';
 import '../../../notifications/notification_repository.dart';
 import '../../../payments/payments_repository.dart';
-import '../../../ratings/mock_ratings_repository.dart';
+import '../../../ratings/ratings_repository.dart';
+import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../../shift/shift_repository.dart';
 import '../../theme/agap_colors.dart';
@@ -16,6 +19,7 @@ import '../../widgets/business_shell_bottom_nav.dart';
 import '../../widgets/shell_screen_polish.dart';
 import '../marketplace/business_gigs_screen.dart';
 import '../messages/message_thread_screen.dart';
+import '../ratings/user_ratings_screen.dart';
 
 class BusinessFindWorkersScreen extends StatefulWidget {
   const BusinessFindWorkersScreen({
@@ -29,11 +33,12 @@ class BusinessFindWorkersScreen extends StatefulWidget {
     this.onOpenNotifications,
     this.onOpenInbox,
     this.notificationUnreadCount = 0,
+    this.inboxUnreadCount = 0,
   });
 
   final MarketplaceRepository repo;
   final SessionController session;
-  final MockRatingsRepository ratings;
+  final RatingsRepository ratings;
   final ShiftRepository shiftRepo;
   final NotificationRepository notifications;
   final PaymentsRepository payments;
@@ -41,6 +46,7 @@ class BusinessFindWorkersScreen extends StatefulWidget {
   final VoidCallback? onOpenNotifications;
   final VoidCallback? onOpenInbox;
   final int notificationUnreadCount;
+  final int inboxUnreadCount;
 
   @override
   State<BusinessFindWorkersScreen> createState() =>
@@ -189,10 +195,24 @@ class _BusinessFindWorkersScreenState extends State<BusinessFindWorkersScreen> {
                                 ),
                                 onPressed: widget.onOpenInbox,
                                 tooltip: 'Messages',
-                                icon: Icon(
-                                  Icons.chat_bubble_outline_rounded,
-                                  color: AgapColors.businessGreenDeep,
-                                  size: 22,
+                                icon: Badge(
+                                  isLabelVisible: widget.inboxUnreadCount > 0,
+                                  label: Text(
+                                    widget.inboxUnreadCount > 99
+                                        ? '99+'
+                                        : '${widget.inboxUnreadCount}',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  backgroundColor: Colors.red.shade600,
+                                  child: Icon(
+                                    Icons.chat_bubble_outline_rounded,
+                                    color: AgapColors.businessGreenDeep,
+                                    size: 22,
+                                  ),
                                 ),
                               ),
                             ),
@@ -444,7 +464,12 @@ class _BusinessFindWorkersScreenState extends State<BusinessFindWorkersScreen> {
                   separatorBuilder: (_, __) => const SizedBox(height: 12),
                   itemBuilder: (context, i) => ShellStaggerItem(
                     index: i,
-                    child: ShellLift(child: _WorkerCard(worker: filtered[i])),
+                    child: ShellLift(
+                      child: _WorkerCard(
+                        worker: filtered[i],
+                        ratings: widget.ratings,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -505,7 +530,11 @@ Future<void> _openWorkerDirectMessage({
   }
 }
 
-void _showWorkerDetailSheet(BuildContext context, DiscoverableWorker w) {
+void _showWorkerDetailSheet(
+  BuildContext context,
+  DiscoverableWorker w, {
+  required RatingsRepository ratings,
+}) {
   final media = MediaQuery.of(context);
   final navReserve = BusinessShellBottomNav.barHeight + media.padding.bottom;
 
@@ -518,6 +547,7 @@ void _showWorkerDetailSheet(BuildContext context, DiscoverableWorker w) {
       pageBuilder: (modalContext, animation, secondaryAnimation) {
         return _WorkerDetailOverlayPage(
           worker: w,
+          ratings: ratings,
           navReserve: navReserve,
           animation: animation,
           hostContext: context,
@@ -532,12 +562,14 @@ void _showWorkerDetailSheet(BuildContext context, DiscoverableWorker w) {
 class _WorkerDetailOverlayPage extends StatelessWidget {
   const _WorkerDetailOverlayPage({
     required this.worker,
+    required this.ratings,
     required this.navReserve,
     required this.animation,
     required this.hostContext,
   });
 
   final DiscoverableWorker worker;
+  final RatingsRepository ratings;
   final double navReserve;
   final Animation<double> animation;
   final BuildContext hostContext;
@@ -595,6 +627,7 @@ class _WorkerDetailOverlayPage extends StatelessWidget {
                     constraints: BoxConstraints(maxHeight: maxSheetH),
                     child: _WorkerDetailSheetPanel(
                       worker: worker,
+                      ratings: ratings,
                       ratingLine: ratingLine,
                       verifiedBlue: _verifiedBlue,
                       hostContext: hostContext,
@@ -615,6 +648,7 @@ class _WorkerDetailOverlayPage extends StatelessWidget {
 class _WorkerDetailSheetPanel extends StatelessWidget {
   const _WorkerDetailSheetPanel({
     required this.worker,
+    required this.ratings,
     required this.ratingLine,
     required this.verifiedBlue,
     required this.hostContext,
@@ -623,11 +657,181 @@ class _WorkerDetailSheetPanel extends StatelessWidget {
   });
 
   final DiscoverableWorker worker;
+  final RatingsRepository ratings;
   final String ratingLine;
   final Color verifiedBlue;
   final BuildContext hostContext;
   final BuildContext modalContext;
   final VoidCallback onClose;
+
+  Future<Gig?> _pickListingToOffer({
+    required BuildContext hostContext,
+    required String businessId,
+  }) async {
+    final scope = MarketplaceScope.tryOf(hostContext);
+    if (scope == null) return null;
+
+    final all = await scope.repo.listGigs();
+    final now = DateTime.now().toUtc();
+    final gigs = all
+        .where(
+          (g) =>
+              g.businessId == businessId &&
+              g.status == GigStatus.open &&
+              g.endAt.toUtc().isAfter(now),
+        )
+        .toList()
+      ..sort((a, b) => a.startAt.compareTo(b.startAt));
+
+    if (!hostContext.mounted) return null;
+
+    if (gigs.isEmpty) {
+      await showDialog<void>(
+        context: hostContext,
+        builder: (ctx) => AlertDialog(
+          title: const Text('No open listings'),
+          content: const Text(
+            'Create or open a job listing first, then you can offer it to a worker.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return null;
+    }
+
+    return showModalBottomSheet<Gig>(
+      context: hostContext,
+      showDragHandle: true,
+      backgroundColor: Colors.white,
+      isScrollControlled: true,
+      builder: (ctx) {
+        return SafeArea(
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              16,
+              8,
+              16,
+              12 + MediaQuery.paddingOf(ctx).bottom,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Select a listing',
+                  style: GoogleFonts.inter(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w900,
+                    color: const Color(0xFF111827),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'This will send the worker a job offer notification.',
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w600,
+                    color: AgapColors.textMuted,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                ConstrainedBox(
+                  constraints: BoxConstraints(
+                    maxHeight: MediaQuery.sizeOf(ctx).height * 0.45,
+                  ),
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: gigs.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 8),
+                    itemBuilder: (_, i) {
+                      final g = gigs[i];
+                      final payDay = (g.pay.amount / 100).round();
+                      final start = g.startAt.toLocal();
+                      final end = g.endAt.toLocal();
+                      final dateLine =
+                          '${start.month.toString().padLeft(2, '0')}/${start.day.toString().padLeft(2, '0')}/${start.year}'
+                          '${(start.year == end.year && start.month == end.month && start.day == end.day) ? '' : ' → ${end.month.toString().padLeft(2, '0')}/${end.day.toString().padLeft(2, '0')}/${end.year}'}';
+                      return InkWell(
+                        onTap: () => Navigator.of(ctx).pop(g),
+                        borderRadius: BorderRadius.circular(14),
+                        child: Ink(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF8FAFC),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: AgapColors.borderSubtle.withValues(alpha: 0.95),
+                            ),
+                          ),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 40,
+                                height: 40,
+                                decoration: BoxDecoration(
+                                  color: AgapColors.businessMint,
+                                  borderRadius: BorderRadius.circular(14),
+                                ),
+                                child: Icon(
+                                  Icons.work_outline_rounded,
+                                  color: AgapColors.businessGreenDeep,
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      g.title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: GoogleFonts.inter(
+                                        fontWeight: FontWeight.w900,
+                                        color: const Color(0xFF111827),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      '${g.category} · ₱$payDay/day · $dateLine',
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: GoogleFonts.inter(
+                                        fontWeight: FontWeight.w600,
+                                        color: AgapColors.textMuted,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              const Icon(
+                                Icons.chevron_right_rounded,
+                                color: Color(0xFF94A3B8),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: const Text('Cancel'),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -769,6 +973,35 @@ class _WorkerDetailSheetPanel extends StatelessWidget {
                                     color: const Color(0xFF111827),
                                   ),
                                 ),
+                                const SizedBox(width: 8),
+                                TextButton(
+                                  onPressed: () {
+                                    Navigator.of(modalContext).push<void>(
+                                      MaterialPageRoute<void>(
+                                        builder: (_) => UserRatingsScreen(
+                                          ratings: ratings,
+                                          userId: w.workerId,
+                                          title: 'Worker reviews',
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                  style: TextButton.styleFrom(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 10,
+                                      vertical: 6,
+                                    ),
+                                    minimumSize: const Size(0, 0),
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                  ),
+                                  child: Text(
+                                    'View',
+                                    style: GoogleFonts.inter(
+                                      fontWeight: FontWeight.w900,
+                                      color: verifiedBlue,
+                                    ),
+                                  ),
+                                ),
                               ],
                             ),
                             const SizedBox(height: 6),
@@ -906,18 +1139,60 @@ class _WorkerDetailSheetPanel extends StatelessWidget {
                         borderRadius: BorderRadius.circular(14),
                         onTap: w.hiredByMe
                             ? null
-                            : () {
-                                Navigator.of(modalContext).pop();
-                                ScaffoldMessenger.of(hostContext).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      'Post or open a job, then hire ${w.displayName} from applicants.',
-                                      style: GoogleFonts.inter(
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                  ),
+                            : () async {
+                                final scope = MarketplaceScope.tryOf(hostContext);
+                                if (scope == null) return;
+                                final businessId =
+                                    appActorId(scope.session, mockFallback: '');
+                                if (businessId.isEmpty) return;
+
+                                final gig = await _pickListingToOffer(
+                                  hostContext: hostContext,
+                                  businessId: businessId,
                                 );
+                                if (gig == null) return;
+
+                                if (modalContext.mounted) {
+                                  Navigator.of(modalContext).pop();
+                                }
+
+                                try {
+                                  await scope.notifications.add(
+                                    userId: w.workerId,
+                                    title: 'Job offer',
+                                    body: 'You have a job offer: ${gig.title}',
+                                    data: {
+                                      'type': 'job_offer',
+                                      'gigId': gig.id,
+                                      'businessId': businessId,
+                                    },
+                                  );
+                                  if (hostContext.mounted) {
+                                    ScaffoldMessenger.of(hostContext).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Offer sent to ${w.displayName}.',
+                                          style: GoogleFonts.inter(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                } catch (e) {
+                                  if (hostContext.mounted) {
+                                    ScaffoldMessenger.of(hostContext).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'Could not send offer: $e',
+                                          style: GoogleFonts.inter(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    );
+                                  }
+                                }
                               },
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 15),
@@ -1014,9 +1289,13 @@ class _WorkerCircleAction extends StatelessWidget {
 }
 
 class _WorkerCard extends StatelessWidget {
-  const _WorkerCard({required this.worker});
+  const _WorkerCard({
+    required this.worker,
+    required this.ratings,
+  });
 
   final DiscoverableWorker worker;
+  final RatingsRepository ratings;
 
   @override
   Widget build(BuildContext context) {
@@ -1025,7 +1304,7 @@ class _WorkerCard extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(16),
-        onTap: () => _showWorkerDetailSheet(context, w),
+        onTap: () => _showWorkerDetailSheet(context, w, ratings: ratings),
         child: Ink(
           decoration: BoxDecoration(
             color: Colors.white,

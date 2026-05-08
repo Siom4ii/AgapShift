@@ -7,7 +7,7 @@ import '../../../marketplace/marketplace_repository.dart';
 import '../../../profile/worker_display_names.dart';
 import '../../../notifications/notification_repository.dart';
 import '../../../payments/payments_repository.dart';
-import '../../../ratings/mock_ratings_repository.dart';
+import '../../../ratings/ratings_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../../shift/shift_repository.dart';
@@ -27,10 +27,10 @@ class BusinessHomeScreen extends StatefulWidget {
     required this.ratings,
     required this.onPostJob,
     required this.onFindWorkers,
-    required this.onOpenWallet,
     required this.onOpenNotifications,
     required this.onOpenInbox,
     this.notificationUnreadCount = 0,
+    this.inboxUnreadCount = 0,
   });
 
   final MarketplaceRepository repo;
@@ -38,13 +38,13 @@ class BusinessHomeScreen extends StatefulWidget {
   final ShiftRepository shiftRepo;
   final NotificationRepository notifications;
   final PaymentsRepository payments;
-  final MockRatingsRepository ratings;
+  final RatingsRepository ratings;
   final VoidCallback onPostJob;
   final VoidCallback onFindWorkers;
-  final VoidCallback onOpenWallet;
   final VoidCallback onOpenNotifications;
   final VoidCallback onOpenInbox;
   final int notificationUnreadCount;
+  final int inboxUnreadCount;
 
   @override
   State<BusinessHomeScreen> createState() => _BusinessHomeScreenState();
@@ -58,8 +58,6 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
   int _totalHired = 0;
   int _pendingApplicantCount = 0;
   double _businessRatingAvg = 0;
-  int _walletAvailableCentavos = 0;
-  int _totalSpentCentavos = 0;
   List<_Applicant> _recentApplicants = const [];
 
   static final _headerGradient = LinearGradient(
@@ -86,8 +84,6 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
       final mine = all.where((g) => g.businessId == businessId).toList()
         ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
       final apps = await widget.repo.listApplications();
-      final wallet = await widget.payments.getWallet(businessId);
-      final ledger = await widget.payments.listLedger(businessId);
       final avgRating = await widget.ratings.averageForUser(businessId);
 
       final myGigIds = mine.map((g) => g.id).toSet();
@@ -107,14 +103,6 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
                 a.status == ApplicationStatus.applied,
           )
           .length;
-
-      var spentCentavos = 0;
-      for (final t in ledger) {
-        if (t.userId == businessId &&
-            t.type == TransactionType.escrowFunding) {
-          spentCentavos += t.amount.amount;
-        }
-      }
 
       final pendingApps = apps
           .where(
@@ -157,8 +145,6 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
         _totalHired = hired;
         _pendingApplicantCount = pending;
         _businessRatingAvg = avgRating;
-        _walletAvailableCentavos = wallet.available.amount;
-        _totalSpentCentavos = spentCentavos;
         _recentApplicants = recent;
       });
     } finally {
@@ -306,10 +292,24 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
                                   ),
                                   onPressed: widget.onOpenInbox,
                                   tooltip: 'Messages',
-                                  icon: const Icon(
-                                    Icons.chat_bubble_outline_rounded,
-                                    color: Colors.white,
-                                    size: 22,
+                                  icon: Badge(
+                                    isLabelVisible: widget.inboxUnreadCount > 0,
+                                    label: Text(
+                                      widget.inboxUnreadCount > 99
+                                          ? '99+'
+                                          : '${widget.inboxUnreadCount}',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w800,
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                    backgroundColor: Colors.red.shade600,
+                                    child: const Icon(
+                                      Icons.chat_bubble_outline_rounded,
+                                      color: Colors.white,
+                                      size: 22,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -419,62 +419,6 @@ class _BusinessHomeScreenState extends State<BusinessHomeScreen> {
                                     : '$_pendingApplicantCount pending now',
                                 onTap: widget.onFindWorkers,
                               ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      _SectionCard(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Text(
-                                  'Wallet',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 17,
-                                    fontWeight: FontWeight.w800,
-                                  ),
-                                ),
-                                const Spacer(),
-                                TextButton(
-                                  onPressed: widget.onOpenWallet,
-                                  child: Text(
-                                    'Manage ›',
-                                    style: GoogleFonts.inter(
-                                      fontWeight: FontWeight.w700,
-                                      color: AgapColors.businessGreen,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: _WalletMini(
-                                    label: 'Available',
-                                    value: _formatPesoCompact(
-                                      _walletAvailableCentavos,
-                                    ),
-                                    valueColor: AgapColors.businessGreen,
-                                    bg: AgapColors.businessMint,
-                                  ),
-                                ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: _WalletMini(
-                                    label: 'Total Spent',
-                                    value: _formatPesoCompact(
-                                      _totalSpentCentavos,
-                                    ),
-                                    valueColor: const Color(0xFF111827),
-                                    bg: const Color(0xFFF3F4F6),
-                                  ),
-                                ),
-                              ],
                             ),
                           ],
                         ),
@@ -796,52 +740,7 @@ class _SectionCard extends StatelessWidget {
   }
 }
 
-class _WalletMini extends StatelessWidget {
-  const _WalletMini({
-    required this.label,
-    required this.value,
-    required this.valueColor,
-    required this.bg,
-  });
-
-  final String label;
-  final String value;
-  final Color valueColor;
-  final Color bg;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(14),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            label,
-            style: GoogleFonts.inter(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: AgapColors.textMuted,
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            style: GoogleFonts.inter(
-              fontSize: 20,
-              fontWeight: FontWeight.w800,
-              color: valueColor,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
+// Wallet UI removed (no digital wallet in app for now).
 
 class _ActiveJobCard extends StatelessWidget {
   const _ActiveJobCard({
@@ -1079,15 +978,7 @@ class _ApplicantTile extends StatelessWidget {
   }
 }
 
-/// Wallet header — compact peso from minor units (centavos).
-String _formatPesoCompact(int centavos) {
-  final p = centavos / 100.0;
-  if (p <= 0) return '₱0';
-  if (p >= 1000000) return '₱${(p / 1000000).toStringAsFixed(1)}M';
-  if (p >= 1000) return '₱${(p / 1000).toStringAsFixed(1)}k';
-  if (p == p.roundToDouble()) return '₱${p.round()}';
-  return '₱${p.toStringAsFixed(0)}';
-}
+// (removed) _formatPesoCompact
 
 String _businessDisplayName(String email) {
   if (email.isEmpty) return 'Your business';

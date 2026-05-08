@@ -23,8 +23,8 @@ Future<GeoPoint?> tryGetCurrentUserGeoPoint() async {
     }
     final pos = await Geolocator.getCurrentPosition(
       locationSettings: const LocationSettings(
-        accuracy: LocationAccuracy.high,
-        timeLimit: Duration(seconds: 20),
+        accuracy: LocationAccuracy.best,
+        timeLimit: Duration(seconds: 25),
       ),
     );
     return GeoPoint(lat: pos.latitude, lng: pos.longitude);

@@ -1,6 +1,8 @@
 import './style.css';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
+const BUILD_MARK = 'admin-web@2026-05-08-0218';
+
 type RoleTab = 'worker' | 'business';
 type StatusFilter = 'all' | 'pendingVerification' | 'verified' | 'rejected' | 'suspended';
 
@@ -66,6 +68,35 @@ function supabaseConfigDebugHtml(): string {
   </div>`;
 }
 
+let loginNoticeHtml: string | null = null;
+
+function setLoginNoticeAsAdminHelp(userId: string, email: string | null): void {
+  const sql = `insert into public.profiles (id, email, role)\nvalues ('${userId}', '${email ?? 'staff@example.com'}', 'admin')\non conflict (id) do update set role = 'admin', email = excluded.email;`;
+  loginNoticeHtml = `
+    <div class="error">
+      <div style="font-weight:700;margin-bottom:6px">This account is not marked as admin</div>
+      <div class="muted" style="margin-bottom:10px">User id: <code>${escapeHtml(userId)}</code></div>
+      <div class="muted" style="margin-bottom:8px">Run this in Supabase SQL editor to grant access:</div>
+      <pre style="white-space:pre-wrap;margin:0 0 10px;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.12);background:rgba(0,0,0,0.25)"><code>${escapeHtml(sql)}</code></pre>
+      <button type="button" class="btn btn-ghost" id="copy-admin-sql" data-sql="${escapeAttr(sql)}">Copy SQL</button>
+    </div>`;
+}
+
+function wireLoginNotice(): void {
+  const btn = document.getElementById('copy-admin-sql') as HTMLButtonElement | null;
+  if (!btn) return;
+  btn.addEventListener('click', async () => {
+    const sql = btn.dataset.sql ?? '';
+    try {
+      await navigator.clipboard.writeText(sql);
+      btn.textContent = 'Copied';
+      setTimeout(() => (btn.textContent = 'Copy SQL'), 900);
+    } catch {
+      window.prompt('Copy this SQL:', sql);
+    }
+  });
+}
+
 let supabase: SupabaseClient | null = null;
 if (supabaseConfigured) {
   supabase = createClient(url, anonKey);
@@ -84,6 +115,8 @@ let savingAccount = false;
 /** Signed URL fetch before KYC viewer opens. */
 let previewLoading = false;
 let rejectModalUser: string | null = null;
+
+console.log('[Nexora admin]', BUILD_MARK);
 
 function spinnerHtml(size: 'md' | 'sm'): string {
   const cls = size === 'md' ? 'spinner' : 'spinner spinner-sm';
@@ -642,11 +675,12 @@ function renderLogin(): void {
           </div>
         </div>
         <p class="sub">Sign in with your admin account. Use a dedicated staff email — not a worker or business app login.</p>
+        ${loginNoticeHtml ?? ''}
         ${
           !supabaseConfigured
             ? `<div class="error">Set real values for <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> in <code>admin-web/.env</code> (Supabase Dashboard → Settings → API — same as the Flutter app’s <code>assets/supabase.env</code>). Use the project root URL like <code>https://xxx.supabase.co</code> (not <code>/rest/v1</code>). Then restart <code>npm run dev</code>.${supabaseConfigDebugHtml()}</div>`
             : `
-        <form id="login-form">
+        <form id="login-form" action="javascript:void(0)" onsubmit="return false;">
           <div class="field">
             <label for="email">Email</label>
             <input id="email" name="email" type="email" autocomplete="username" required />
@@ -658,7 +692,7 @@ function renderLogin(): void {
               <button type="button" class="password-toggle" id="password-toggle">${passwordToggleEyeSvg}</button>
             </div>
           </div>
-          <button type="submit" class="btn btn-primary" id="login-btn">
+          <button type="button" class="btn btn-primary" id="login-btn">
             <span class="login-btn-inner">
               <span class="login-btn-label">Sign in</span>
               ${spinnerHtml('sm')}
@@ -669,44 +703,73 @@ function renderLogin(): void {
         }
       </div>
       <p class="login-foot">Accounts are managed in Supabase. There is no sign-up on this page.</p>
+      <p class="login-foot" style="opacity:.7;margin-top:10px"><code>${BUILD_MARK}</code></p>
     </div>
   `;
 
+  wireLoginNotice();
   wirePasswordToggle();
 
   const form = document.getElementById('login-form');
   const errEl = document.getElementById('login-err');
-  form?.addEventListener('submit', async (e) => {
-    e.preventDefault();
+  const handler = async (e?: Event) => {
+    e?.preventDefault();
+    e?.stopPropagation();
     if (!supabase || !errEl) return;
+    const formEl = form as HTMLFormElement | null;
+    // With a non-submit button we must manually trigger constraint validation.
+    if (formEl && !formEl.reportValidity()) return;
     const btn = document.getElementById('login-btn') as HTMLButtonElement;
     const email = (document.getElementById('email') as HTMLInputElement).value.trim();
     const password = (document.getElementById('password') as HTMLInputElement).value;
     errEl.style.display = 'none';
+    loginNoticeHtml = null;
+    if (!email || !password) {
+      errEl.textContent = 'Enter your email and password.';
+      errEl.style.display = 'block';
+      return;
+    }
     btn.disabled = true;
     btn.classList.add('is-loading');
     try {
       const { error } = await supabase.auth.signInWithPassword({ email, password });
       if (error) {
-        errEl.textContent = error.message;
+        console.error('Login error:', error);
+        errEl.textContent = error.message || `Login failed (status ${error.status ?? 'unknown'})`;
         errEl.style.display = 'block';
         return;
       }
       const ok = await ensureStaff();
       if (!ok) {
+        const { data: u } = await supabase.auth.getUser();
+        const uid = u.user?.id ?? '';
+        const uEmail = u.user?.email ?? email;
         await supabase.auth.signOut();
-        errEl.textContent =
-          'This account is not marked as admin. In SQL run: update public.profiles set role = \'admin\' where email = \'your@email\';';
-        errEl.style.display = 'block';
+        if (uid) setLoginNoticeAsAdminHelp(uid, uEmail);
+        renderLogin();
         return;
       }
       view = 'app';
       await loadProfiles();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error('Login failed:', err);
+      errEl.textContent = msg || 'Login failed';
+      errEl.style.display = 'block';
     } finally {
       btn.classList.remove('is-loading');
       btn.disabled = false;
     }
-  });
+  };
+  // Ensure we block native form submit page refresh.
+  if (form) {
+    form.addEventListener('submit', handler, { capture: true });
+    (form as HTMLFormElement).onsubmit = (ev) => {
+      handler(ev);
+      return false;
+    };
+  }
+  document.getElementById('login-btn')?.addEventListener('click', () => handler());
 }
 
 function renderRejectModal(): string {
@@ -1045,7 +1108,11 @@ async function init(): Promise<void> {
   }
   const ok = await ensureStaff();
   if (!ok) {
+    const { data: u } = await supabase.auth.getUser();
+    const uid = u.user?.id ?? '';
+    const uEmail = u.user?.email ?? null;
     await supabase.auth.signOut();
+    if (uid) setLoginNoticeAsAdminHelp(uid, uEmail);
     view = 'login';
     renderLogin();
     return;

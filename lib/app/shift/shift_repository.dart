@@ -9,9 +9,25 @@ typedef ShiftAttendanceScanResult = ({
 
 /// Check-in / check-out and shift session persistence (mock KV or Supabase).
 ///
-/// Workers show a QR; the **employer** scans it to record attendance.
+/// Employers show a QR; the **worker** scans it to record attendance.
 abstract class ShiftRepository {
+  /// Signed token for the employer to display (scan type + [workDay]).
+  String createEmployerAttendanceQr({
+    required String gigId,
+    required AttendanceScanType type,
+    required DateTime workDay,
+  });
+
+  /// Worker scans employer QR, server verifies hired worker + gig status, then records attendance.
+  Future<ShiftAttendanceScanResult> scanEmployerAttendanceQr({
+    required String qrToken,
+    required String workerId,
+    DateTime? now,
+  });
+
   /// Signed token for the worker to display (includes [workerId], scan type, [workDay]).
+  ///
+  /// Deprecated legacy flow (employer scans worker QR). Kept for backward compatibility.
   String createWorkerAttendanceQr({
     required String gigId,
     required String workerId,
@@ -32,6 +48,8 @@ abstract class ShiftRepository {
   });
 
   /// Parse [qrToken], verify the gig belongs to [businessId], then record attendance.
+  ///
+  /// Deprecated legacy flow (employer scans worker QR). Kept for backward compatibility.
   Future<ShiftAttendanceScanResult> scanWorkerAttendanceQr({
     required String qrToken,
     required String businessId,

@@ -1,3 +1,5 @@
+import '../../../../domain/models.dart';
+
 /// Static list of municipalities + barangays for Davao del Sur, used by the
 /// worker onboarding "Personal Info" step's address picker.
 ///
@@ -292,5 +294,30 @@ class DavaoDelSur {
       province,
     ];
     return parts.join(', ');
+  }
+
+  /// Approximate WGS84 center for each [municipalities] entry (town/city hall
+  /// area). Used for commute distance when device GPS is unreliable.
+  static const Map<String, GeoPoint> _municipalityCenters = {
+    'bansalan': GeoPoint(lat: 6.7864, lng: 125.1956),
+    'digos city': GeoPoint(lat: 6.7461, lng: 125.3553),
+    'hagonoy': GeoPoint(lat: 6.6842, lng: 125.2895),
+    'kiblawan': GeoPoint(lat: 6.6111, lng: 125.2386),
+    'magsaysay': GeoPoint(lat: 6.7667, lng: 125.1667),
+    'malalag': GeoPoint(lat: 6.6050, lng: 125.4019),
+    'matanao': GeoPoint(lat: 6.7496, lng: 125.2215),
+    'padada': GeoPoint(lat: 6.6389, lng: 125.6172),
+    'santa cruz': GeoPoint(lat: 6.8367, lng: 125.4147),
+    'sulop': GeoPoint(lat: 6.5986, lng: 125.3436),
+  };
+
+  /// [rawName] should match a label from [municipalities] (e.g. `Padada`,
+  /// `Digos City`). Returns null if unknown.
+  static GeoPoint? approxCenterForMunicipality(String? rawName) {
+    if (rawName == null) return null;
+    var k = rawName.trim().toLowerCase();
+    if (k.isEmpty) return null;
+    if (k == 'digos') k = 'digos city';
+    return _municipalityCenters[k];
   }
 }

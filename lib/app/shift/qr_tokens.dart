@@ -136,6 +136,71 @@ class QrTokenCodec {
     );
   }
 
+  /// Parsed employer attendance QR (signed payload excludes [workerId]).
+  /// Worker scans this; worker identity comes from auth/session.
+  EmployerAttendanceQrParseResult parseEmployerAttendance({
+    required String token,
+    required DateTime now,
+  }) {
+    final dot = token.lastIndexOf('.');
+    if (dot <= 0 || dot == token.length - 1) {
+      return EmployerAttendanceQrParseResult.invalid('Malformed token');
+    }
+    final body = token.substring(0, dot);
+    final sig = token.substring(dot + 1);
+    if (_hmac(body) != sig) {
+      return EmployerAttendanceQrParseResult.invalid('Invalid signature');
+    }
+    final decoded = jsonDecode(body);
+    if (decoded is! Map) {
+      return EmployerAttendanceQrParseResult.invalid('Invalid payload');
+    }
+    final map = Map<String, dynamic>.from(decoded);
+
+    // Must NOT be a worker QR (those include workerId).
+    final wid = map['workerId'];
+    if (wid is String && wid.isNotEmpty) {
+      return EmployerAttendanceQrParseResult.invalid('Not an employer attendance QR');
+    }
+
+    final gid = map['gigId'];
+    if (gid is! String || gid.isEmpty) {
+      return EmployerAttendanceQrParseResult.invalid('Missing gig');
+    }
+    final typeRaw = map['type'];
+    if (typeRaw is! String) {
+      return EmployerAttendanceQrParseResult.invalid('Missing scan type');
+    }
+    final type = switch (typeRaw) {
+      'checkIn' => AttendanceScanType.checkIn,
+      'checkOut' => AttendanceScanType.checkOut,
+      _ => null,
+    };
+    if (type == null) {
+      return EmployerAttendanceQrParseResult.invalid('Invalid scan type');
+    }
+    final expMs = map['exp'];
+    if (expMs is! int) {
+      return EmployerAttendanceQrParseResult.invalid('Missing exp');
+    }
+    final exp = DateTime.fromMillisecondsSinceEpoch(expMs, isUtc: true);
+    if (now.toUtc().isAfter(exp)) {
+      return EmployerAttendanceQrParseResult.invalid('Token expired');
+    }
+    final rawWd = map['workDate'];
+    if (rawWd is! String || rawWd.length < 10) {
+      return EmployerAttendanceQrParseResult.invalid('Missing work day');
+    }
+    final workDateYmd = rawWd.substring(0, 10);
+
+    return EmployerAttendanceQrParseResult.valid(
+      gigId: gid,
+      type: type,
+      workDateYmd: workDateYmd,
+      expiresAt: exp,
+    );
+  }
+
   static String _dateYmdFromUtc(DateTime t) {
     final u = t.toUtc();
     final y = u.year.toString().padLeft(4, '0');
@@ -197,6 +262,42 @@ class WorkerAttendanceQrParseResult {
   final String? reason;
   final String? gigId;
   final String? workerId;
+  final AttendanceScanType? type;
+  final String? workDateYmd;
+  final DateTime? expiresAt;
+}
+
+class EmployerAttendanceQrParseResult {
+  const EmployerAttendanceQrParseResult._({
+    required this.ok,
+    this.reason,
+    this.gigId,
+    this.type,
+    this.workDateYmd,
+    this.expiresAt,
+  });
+
+  const EmployerAttendanceQrParseResult.invalid(String reason)
+      : this._(ok: false, reason: reason);
+
+  factory EmployerAttendanceQrParseResult.valid({
+    required String gigId,
+    required AttendanceScanType type,
+    required String workDateYmd,
+    required DateTime expiresAt,
+  }) {
+    return EmployerAttendanceQrParseResult._(
+      ok: true,
+      gigId: gigId,
+      type: type,
+      workDateYmd: workDateYmd,
+      expiresAt: expiresAt,
+    );
+  }
+
+  final bool ok;
+  final String? reason;
+  final String? gigId;
   final AttendanceScanType? type;
   final String? workDateYmd;
   final DateTime? expiresAt;

@@ -1,10 +1,9 @@
-import 'dart:math' as math;
-
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../domain/enums.dart';
 import '../../domain/models.dart';
 import '../location/davao_del_sur_scope.dart';
+import '../location/geo_distance.dart';
 import 'marketplace_repository.dart';
 
 /// Postgres-backed gigs + applications ([supabase/migrations/001_marketplace.sql]).
@@ -87,14 +86,17 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
   }) async {
     final gigs = await listGigs();
     final filtered = <_ScoredGig>[];
+    final now = DateTime.now().toUtc();
     for (final g in gigs) {
       if (g.status != GigStatus.open) continue;
+      // Worker rule: don't show expired listings.
+      if (!g.endAt.toUtc().isAfter(now)) continue;
       if (!DavaoDelSurScope.contains(g.location)) continue;
       if (category != null && category.isNotEmpty && g.category != category) {
         continue;
       }
       if (minPayAmount != null && g.pay.amount < minPayAmount) continue;
-      final d = _distanceMeters(center, g.location);
+      final d = geoDistanceMeters(center, g.location);
       if (d > radiusMeters) continue;
       filtered.add(_ScoredGig(gig: g, distanceMeters: d));
     }
@@ -111,14 +113,17 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
     final gigs = await listGigs();
     final filtered = <_ScoredGig>[];
     final center = sortCenter ?? DavaoDelSurScope.defaultCenter;
+    final now = DateTime.now().toUtc();
     for (final g in gigs) {
       if (g.status != GigStatus.open) continue;
+      // Worker rule: don't show expired listings.
+      if (!g.endAt.toUtc().isAfter(now)) continue;
       if (!DavaoDelSurScope.contains(g.location)) continue;
       if (category != null && category.isNotEmpty && g.category != category) {
         continue;
       }
       if (minPayAmount != null && g.pay.amount < minPayAmount) continue;
-      final d = _distanceMeters(center, g.location);
+      final d = geoDistanceMeters(center, g.location);
       filtered.add(_ScoredGig(gig: g, distanceMeters: d));
     }
     _sortFeedByBoostThenDistance(filtered);
@@ -277,11 +282,6 @@ class SupabaseMarketplaceRepository implements MarketplaceRepository {
     );
   }
 
-  int _distanceMeters(GeoPoint a, GeoPoint b) {
-    final dx = (a.lat - b.lat) * 111000.0;
-    final dy = (a.lng - b.lng) * 111000.0;
-    return math.sqrt(dx * dx + dy * dy).round();
-  }
 }
 
 void _sortFeedByBoostThenDistance(List<_ScoredGig> filtered) {

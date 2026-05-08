@@ -2,20 +2,23 @@ import 'dart:convert';
 
 import '../../domain/models.dart';
 import '../storage/kv_store.dart';
+import 'ratings_repository.dart';
 
-class MockRatingsRepository {
+class MockRatingsRepository implements RatingsRepository {
   MockRatingsRepository(this._store);
 
   final KvStore _store;
 
   static const _kRatings = 'agapshift.ratings.items'; // list
 
+  @override
   Future<List<Rating>> listForUser(String userId) async {
     final all = await _loadAll();
     return all.where((r) => r.ratedUserId == userId).toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
   }
 
+  @override
   Future<Rating?> getForShift({
     required String gigId,
     required String raterUserId,
@@ -30,6 +33,7 @@ class MockRatingsRepository {
     return null;
   }
 
+  @override
   Future<Rating> create({
     required String gigId,
     required String raterUserId,
@@ -56,6 +60,7 @@ class MockRatingsRepository {
     return rating;
   }
 
+  @override
   Future<double> averageForUser(String userId) async {
     final items = await listForUser(userId);
     if (items.isEmpty) return 0;

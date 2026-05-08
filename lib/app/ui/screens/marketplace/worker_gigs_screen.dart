@@ -12,7 +12,7 @@ import '../../../location/geo_distance.dart';
 import '../../../location/user_geo_point.dart';
 import '../../../marketplace/marketplace_repository.dart';
 import '../../../notifications/notification_repository.dart';
-import '../../../ratings/mock_ratings_repository.dart';
+import '../../../ratings/ratings_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../../shift/shift_repository.dart';
@@ -39,7 +39,7 @@ class WorkerGigsScreen extends StatefulWidget {
   final NotificationRepository notifications;
   final SessionController session;
   final ShiftRepository shift;
-  final MockRatingsRepository ratings;
+  final RatingsRepository ratings;
   final VoidCallback onOpenFindJobs;
   final VoidCallback onOpenMyShift;
 
@@ -209,8 +209,8 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
   List<Gig> get _previewJobs {
     final open = _nearby.where((g) => g.status == GigStatus.open).toList();
     open.sort((a, b) {
-      final da = geoDistanceMetersApprox(_anchor, a.location);
-      final db = geoDistanceMetersApprox(_anchor, b.location);
+      final da = geoDistanceMeters(_anchor, a.location);
+      final db = geoDistanceMeters(_anchor, b.location);
       return da.compareTo(db);
     });
     return open.take(5).toList();
@@ -346,7 +346,7 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
                       gig: g,
                       businessName: _employerDisplayName(g, _businessNames),
                       distanceKm:
-                          geoDistanceMetersApprox(_anchor, g.location) / 1000.0,
+                          geoDistanceMeters(_anchor, g.location) / 1000.0,
                       payAccent: _payAccentForGig(g),
                       onTap: () async {
                         await Navigator.of(context).push<void>(

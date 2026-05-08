@@ -4,6 +4,9 @@ import 'messaging_models.dart';
 abstract class MessagingRepository {
   Future<List<DmConversationSummary>> listConversations();
 
+  /// Total unread message count across all conversations.
+  Future<int> unreadCount();
+
   /// Returns existing 1:1 thread id or creates a new one.
   Future<String> getOrCreateConversation({required String otherUserId});
 

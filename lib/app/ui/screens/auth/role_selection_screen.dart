@@ -59,84 +59,96 @@ class _RoleSelectionScreenState extends State<RoleSelectionScreen> {
           children: [
             _Header(onBack: () => widget.onBack()),
             Expanded(
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(18, 18, 18, 18),
-                child: Column(
-                  children: [
-                    _RoleCard(
-                          selected: _selected == UserRole.worker,
-                          accent: _workerAccent,
-                          title: 'I Want to Work',
-                          subtitle:
-                              'Find flexible gig work near you. Earn\nmoney by completing shifts for nearby\nbusinesses.',
-                          icon: Icons.engineering_rounded,
-                          chips: const [
-                            'Find nearby jobs',
-                            'Flexible schedule',
-                            'Get paid fast',
-                          ],
-                          onTap: () =>
-                              setState(() => _selected = UserRole.worker),
-                        )
-                        .animate()
-                        .fadeIn(duration: 220.ms)
-                        .slideY(begin: 0.04, end: 0),
-                    const SizedBox(height: 14),
-                    _RoleCard(
-                          selected: _selected == UserRole.business,
-                          accent: _businessAccent,
-                          title: 'I Want to Hire',
-                          subtitle:
-                              'Post job requests and hire verified\nworkers instantly for your business\nneeds.',
-                          icon: Icons.apartment_rounded,
-                          chips: const [
-                            'Post jobs instantly',
-                            'Verified workers',
-                            'Pay securely',
-                          ],
-                          onTap: () =>
-                              setState(() => _selected = UserRole.business),
-                        )
-                        .animate()
-                        .fadeIn(delay: 80.ms, duration: 220.ms)
-                        .slideY(begin: 0.04, end: 0),
-                    const Spacer(),
-                    SizedBox(
-                      width: double.infinity,
-                      height: 56,
-                      child: FilledButton(
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _selected == null
-                              ? const Color(0xFFCBD5E1)
-                              : _accent,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(18),
-                          ),
-                          elevation: _selected == null ? 0 : 10,
-                          shadowColor: _accent.withValues(alpha: 0.28),
-                        ),
-                        onPressed: _selected == null ? null : _continue,
-                        child: _submitting
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final bottomPad =
+                      18 + MediaQuery.of(context).padding.bottom;
+                  return SingleChildScrollView(
+                    padding: EdgeInsets.fromLTRB(18, 18, 18, bottomPad),
+                    child: ConstrainedBox(
+                      constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                      child: IntrinsicHeight(
+                        child: Column(
+                          children: [
+                            _RoleCard(
+                                  selected: _selected == UserRole.worker,
+                                  accent: _workerAccent,
+                                  title: 'I Want to Work',
+                                  subtitle:
+                                      'Find flexible gig work near you. Earn\nmoney by completing shifts for nearby\nbusinesses.',
+                                  icon: Icons.engineering_rounded,
+                                  chips: const [
+                                    'Find nearby jobs',
+                                    'Flexible schedule',
+                                    'Get paid fast',
+                                  ],
+                                  onTap: () =>
+                                      setState(() => _selected = UserRole.worker),
+                                )
+                                .animate()
+                                .fadeIn(duration: 220.ms)
+                                .slideY(begin: 0.04, end: 0),
+                            const SizedBox(height: 14),
+                            _RoleCard(
+                                  selected: _selected == UserRole.business,
+                                  accent: _businessAccent,
+                                  title: 'I Want to Hire',
+                                  subtitle:
+                                      'Post job requests and hire verified\nworkers instantly for your business\nneeds.',
+                                  icon: Icons.apartment_rounded,
+                                  chips: const [
+                                    'Post jobs instantly',
+                                    'Verified workers',
+                                    'Pay securely',
+                                  ],
+                                  onTap: () => setState(
+                                    () => _selected = UserRole.business,
+                                  ),
+                                )
+                                .animate()
+                                .fadeIn(delay: 80.ms, duration: 220.ms)
+                                .slideY(begin: 0.04, end: 0),
+                            const Spacer(),
+                            SizedBox(
+                              width: double.infinity,
+                              height: 56,
+                              child: FilledButton(
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: _selected == null
+                                      ? const Color(0xFFCBD5E1)
+                                      : _accent,
+                                  foregroundColor: Colors.white,
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(18),
+                                  ),
+                                  elevation: _selected == null ? 0 : 10,
+                                  shadowColor: _accent.withValues(alpha: 0.28),
                                 ),
-                              )
-                            : Text(
-                                'Continue',
-                                style: GoogleFonts.inter(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.w900,
-                                ),
+                                onPressed: _selected == null ? null : _continue,
+                                child: _submitting
+                                    ? const SizedBox(
+                                        width: 20,
+                                        height: 20,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white,
+                                        ),
+                                      )
+                                    : Text(
+                                        'Continue',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.w900,
+                                        ),
+                                      ),
                               ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ],
-                ),
+                  );
+                },
               ),
             ),
           ],

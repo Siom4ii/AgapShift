@@ -7,6 +7,7 @@ import '../../../location/davao_del_sur_scope.dart';
 import '../../../marketplace/marketplace_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
+import '../../../billing/paymongo_billing_service.dart';
 import '../../../subscriptions/revenue_stub_service.dart';
 import '../../../supabase/supabase_config.dart';
 import '../../theme/agap_colors.dart';
@@ -46,9 +47,11 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
   final _payRate = TextEditingController(text: '850');
   final _requirements = TextEditingController();
   final _benefits = TextEditingController();
+  final _otherJobType = TextEditingController();
 
   String _category = 'Warehouse';
   DateTime? _startDate;
+  DateTime? _endDate;
   TimeOfDay? _startTime;
   TimeOfDay? _endTime;
 
@@ -57,11 +60,12 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
   bool _urgent = false;
 
   bool _submitting = false;
-  bool _payingVerificationFee = false;
+  bool _payingEmployerSubscription = false;
   String? _error;
   /// From `employer_entitlements.jobs_posted_count` when Supabase is on.
   int? _employerJobsPostedCount;
-  DateTime? _verificationFeePaidUntil;
+  /// `subscription_expires_at` (or legacy `verification_fee_paid_until`).
+  DateTime? _employerSubscriptionUntil;
   bool _wantBoost = false;
 
   static const _jobTypeKeys = <String>[
@@ -75,12 +79,12 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
     'Other',
   ];
 
-  bool get _employerVerificationOk {
+  bool get _employerSubscriptionOk {
     if (!SupabaseConfig.isConfigured) return true;
     final c = _employerJobsPostedCount;
     if (c == null) return true;
     if (c < 1) return true;
-    final v = _verificationFeePaidUntil;
+    final v = _employerSubscriptionUntil;
     if (v == null) return false;
     return v.isAfter(DateTime.now());
   }
@@ -89,15 +93,19 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
     if (_title.text.trim().isEmpty) return false;
     if (_desc.text.trim().isEmpty) return false;
     if (_address.text.trim().isEmpty) return false;
-    if (_startDate == null || _startTime == null || _endTime == null) {
+    if (_startDate == null ||
+        _endDate == null ||
+        _startTime == null ||
+        _endTime == null) {
       return false;
     }
+    if (_category == 'Other' && _otherJobType.text.trim().isEmpty) return false;
     final rate = double.tryParse(_payRate.text.trim()) ?? 0;
     if (rate < _minRatePhp) return false;
     final startDt = _composeDateTime(_startDate!, _startTime!);
-    final endDt = _composeDateTime(_startDate!, _endTime!);
+    final endDt = _composeDateTime(_endDate!, _endTime!);
     if (!endDt.isAfter(startDt)) return false;
-    if (!_employerVerificationOk) return false;
+    if (!_employerSubscriptionOk) return false;
     return true;
   }
 
@@ -106,7 +114,10 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
   }
 
   int get _payCentavos {
-    if (_startDate == null || _startTime == null || _endTime == null) {
+    if (_startDate == null ||
+        _endDate == null ||
+        _startTime == null ||
+        _endTime == null) {
       return 0;
     }
     final ratePhp = double.tryParse(_payRate.text.trim()) ?? 0;
@@ -114,16 +125,32 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
     final workers = _workersNeeded.clamp(1, 999);
     final startDt = _composeDateTime(_startDate!, _startTime!);
     final endDt = _composeDateTime(_startDate!, _endTime!);
-    final hours =
+    final hoursPerDay =
         endDt.difference(startDt).inMinutes.clamp(1, 24 * 60) / 60.0;
+    final days = _daysInclusive(_startDate!, _endDate!);
 
     switch (_payUnit) {
       case _PayUnit.hour:
-        return (rateCentavos * hours * workers).round();
+        return (rateCentavos * hoursPerDay * days * workers).round();
       case _PayUnit.day:
+        return rateCentavos * days * workers;
       case _PayUnit.shift:
-        return rateCentavos * workers;
+        return rateCentavos * workers; // one-time per gig
     }
+  }
+
+  int _daysInclusive(DateTime a, DateTime b) {
+    final s = DateTime(a.year, a.month, a.day);
+    final e = DateTime(b.year, b.month, b.day);
+    if (e.isBefore(s)) return 0;
+    return e.difference(s).inDays + 1;
+  }
+
+  String _effectiveCategory() {
+    if (_category != 'Other') return _category;
+    final spec = _otherJobType.text.trim();
+    if (spec.isEmpty) return _category;
+    return 'Other - $spec';
   }
 
   String _buildDescriptionBody() {
@@ -153,49 +180,68 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
     try {
       final row = await Supabase.instance.client
           .from('employer_entitlements')
-          .select('jobs_posted_count, verification_fee_paid_until')
+          .select(
+            'jobs_posted_count, subscription_expires_at, verification_fee_paid_until',
+          )
           .eq('business_id', id)
           .maybeSingle();
       if (!mounted) return;
       setState(() {
         if (row == null) {
           _employerJobsPostedCount = 0;
-          _verificationFeePaidUntil = null;
+          _employerSubscriptionUntil = null;
         } else {
           final n = row['jobs_posted_count'];
           _employerJobsPostedCount =
               n is int ? n : int.tryParse('$n') ?? 0;
-          final vf = row['verification_fee_paid_until'];
-          _verificationFeePaidUntil =
-              vf == null ? null : DateTime.parse(vf as String);
+          final sub = row['subscription_expires_at'];
+          final leg = row['verification_fee_paid_until'];
+          final subDt =
+              sub == null ? null : DateTime.parse(sub as String);
+          final legDt =
+              leg == null ? null : DateTime.parse(leg as String);
+          _employerSubscriptionUntil = subDt ?? legDt;
         }
       });
     } catch (_) {
       if (mounted) {
         setState(() {
           _employerJobsPostedCount = null;
-          _verificationFeePaidUntil = null;
+          _employerSubscriptionUntil = null;
         });
       }
     }
   }
 
-  Future<void> _payVerificationFeeStub() async {
+  Future<void> _payEmployerSubscription() async {
     final id = appActorId(widget.session, mockFallback: '');
     if (id.isEmpty) return;
-    setState(() => _payingVerificationFee = true);
-    await RevenueStubService.payEmployerVerificationFee(id);
-    if (!mounted) return;
-    setState(() => _payingVerificationFee = false);
-    await _loadEmployerPostCount();
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Verification & security fee recorded (demo). Use a real gateway for production.',
-        ),
-      ),
-    );
+    setState(() => _payingEmployerSubscription = true);
+    try {
+      final url = await PaymongoBillingService.startCheckout(
+        product: BillingProduct.employerSub,
+      );
+      if (url == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Unable to start checkout.')),
+        );
+        return;
+      }
+      await PaymongoBillingService.openCheckoutUrl(url);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Pay in PayMongo, then tap Refresh.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Payment could not be started.')),
+      );
+    } finally {
+      if (mounted) setState(() => _payingEmployerSubscription = false);
+      if (mounted) await _loadEmployerPostCount();
+    }
   }
 
   @override
@@ -206,6 +252,7 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
     _payRate.dispose();
     _requirements.dispose();
     _benefits.dispose();
+    _otherJobType.dispose();
     super.dispose();
   }
 
@@ -217,7 +264,27 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
       firstDate: now,
       lastDate: now.add(const Duration(days: 365)),
     );
-    if (d != null) setState(() => _startDate = d);
+    if (d != null) {
+      setState(() {
+        _startDate = d;
+        _endDate ??= d;
+        if (_endDate != null && _endDate!.isBefore(d)) {
+          _endDate = d;
+        }
+      });
+    }
+  }
+
+  Future<void> _pickEndDate() async {
+    final now = DateTime.now();
+    final start = _startDate ?? now.add(const Duration(days: 1));
+    final d = await showDatePicker(
+      context: context,
+      initialDate: _endDate ?? start,
+      firstDate: start,
+      lastDate: start.add(const Duration(days: 365)),
+    );
+    if (d != null) setState(() => _endDate = d);
   }
 
   Future<void> _pickStartTime() async {
@@ -250,8 +317,15 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
       setState(() => _error = 'Work site address is required.');
       return false;
     }
-    if (_startDate == null || _startTime == null || _endTime == null) {
-      setState(() => _error = 'Please set date, start time, and end time.');
+    if (_startDate == null ||
+        _endDate == null ||
+        _startTime == null ||
+        _endTime == null) {
+      setState(() => _error = 'Please set start date, end date, start time, and end time.');
+      return false;
+    }
+    if (_category == 'Other' && _otherJobType.text.trim().isEmpty) {
+      setState(() => _error = 'Please specify the job type.');
       return false;
     }
     final rate = double.tryParse(_payRate.text.trim()) ?? 0;
@@ -263,7 +337,7 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
       return false;
     }
     final startDt = _composeDateTime(_startDate!, _startTime!);
-    final endDt = _composeDateTime(_startDate!, _endTime!);
+    final endDt = _composeDateTime(_endDate!, _endTime!);
     if (!endDt.isAfter(startDt)) {
       setState(() => _error = 'End time must be after start time.');
       return false;
@@ -281,7 +355,7 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
     try {
       final businessId = appActorId(widget.session, mockFallback: 'business');
       final startDt = _composeDateTime(_startDate!, _startTime!);
-      final endDt = _composeDateTime(_startDate!, _endTime!);
+      final endDt = _composeDateTime(_endDate!, _endTime!);
 
       await widget.repo.createGig(
         businessId: businessId,
@@ -292,7 +366,7 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
         startAt: startDt.toUtc(),
         endAt: endDt.toUtc(),
         pay: Money(amount: _payCentavos),
-        category: _category,
+        category: _effectiveCategory(),
         workersNeeded: _workersNeeded.clamp(1, 999),
         isUrgent: _urgent,
         boostedUntil: _wantBoost ? RevenueStubService.boostedUntilNow() : null,
@@ -412,9 +486,9 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
                         padding: const EdgeInsets.only(bottom: 16),
                         child: _EmployerPostingFeeNotice(
                           jobsPostedCount: _employerJobsPostedCount!,
-                          verificationPaid: _employerVerificationOk,
-                          payBusy: _payingVerificationFee,
-                          onPayVerification: _payVerificationFeeStub,
+                          subscriptionActive: _employerSubscriptionOk,
+                          payBusy: _payingEmployerSubscription,
+                          onPaySubscription: _payEmployerSubscription,
                         ),
                       ),
                     _SectionCard(
@@ -448,8 +522,7 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
                               return ChoiceChip(
                                 label: Text(k),
                                 selected: selected,
-                                onSelected: (_) =>
-                                    setState(() => _category = k),
+                                onSelected: (_) => setState(() => _category = k),
                                 selectedColor: AgapColors.mintSoft,
                                 backgroundColor: const Color(0xFFF1F5F9),
                                 labelStyle: GoogleFonts.inter(
@@ -470,6 +543,23 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
                               );
                             }).toList(),
                           ),
+                          if (_category == 'Other') ...[
+                            const SizedBox(height: 14),
+                            _labelRequired('Specify job type'),
+                            const SizedBox(height: 8),
+                            TextField(
+                              controller: _otherJobType,
+                              onChanged: (_) => setState(() {}),
+                              style: GoogleFonts.inter(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 14,
+                                color: _navyTitle,
+                              ),
+                              decoration: _inputDecoration(
+                                hint: 'e.g., Data Entry / Admin',
+                              ),
+                            ),
+                          ],
                           const SizedBox(height: 18),
                           _labelRequired('Job Description'),
                           const SizedBox(height: 8),
@@ -498,7 +588,7 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
                         children: [
                           _sectionTitle('Schedule'),
                           const SizedBox(height: 18),
-                          _labelRequired('Date'),
+                          _labelRequired('Start Date'),
                           const SizedBox(height: 8),
                           InkWell(
                             onTap: _pickDate,
@@ -519,6 +609,34 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
                                   fontWeight: FontWeight.w600,
                                   fontSize: 14,
                                   color: _startDate == null
+                                      ? _labelGrey
+                                      : _navyTitle,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          _labelRequired('End Date'),
+                          const SizedBox(height: 8),
+                          InkWell(
+                            onTap: _pickEndDate,
+                            borderRadius: BorderRadius.circular(12),
+                            child: InputDecorator(
+                              decoration: _inputDecoration().copyWith(
+                                suffixIcon: const Icon(
+                                  Icons.calendar_today_outlined,
+                                  size: 20,
+                                  color: _labelGrey,
+                                ),
+                              ),
+                              child: Text(
+                                _endDate == null
+                                    ? 'mm/dd/yyyy'
+                                    : _formatDate(_endDate!),
+                                style: GoogleFonts.inter(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 14,
+                                  color: _endDate == null
                                       ? _labelGrey
                                       : _navyTitle,
                                 ),
@@ -602,6 +720,51 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
                               ),
                             ],
                           ),
+                          if (_startDate != null &&
+                              _endDate != null &&
+                              _startTime != null &&
+                              _endTime != null) ...[
+                            const SizedBox(height: 14),
+                            Builder(
+                              builder: (context) {
+                                final days = _daysInclusive(_startDate!, _endDate!);
+                                final startDt = _composeDateTime(_startDate!, _startTime!);
+                                final endDt = _composeDateTime(_startDate!, _endTime!);
+                                final hoursPerDay =
+                                    endDt.difference(startDt).inMinutes.clamp(1, 24 * 60) / 60.0;
+                                final dLabel = days == 1 ? '1 day' : '$days days';
+                                final hLabel = '${hoursPerDay.toStringAsFixed(1)} hrs/day';
+                                return Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFF8FAFC),
+                                    borderRadius: BorderRadius.circular(14),
+                                    border: Border.all(color: _borderField),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      const Icon(
+                                        Icons.timelapse_rounded,
+                                        size: 18,
+                                        color: _labelGrey,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          'Duration: $dLabel • $hLabel',
+                                          style: GoogleFonts.inter(
+                                            fontSize: 12.5,
+                                            fontWeight: FontWeight.w700,
+                                            color: _labelGrey,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -809,7 +972,8 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
                                     ),
                                     const SizedBox(height: 2),
                                     Text(
-                                      'Pin to top of worker feeds for 7 days (optional, demo)',
+                                      '₱${RevenueStubService.postBoostPhp} · top of worker feeds for '
+                                      '${RevenueStubService.postBoostValidity.inDays} days (optional, demo)',
                                       style: GoogleFonts.inter(
                                         fontSize: 12,
                                         color: _labelGrey,
@@ -990,25 +1154,25 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
   }
 }
 
-/// Explains first-post-free vs later verification fee + boost (revenue model stub).
+/// First job post free; 2nd+ requires employer subscription; optional boost.
 class _EmployerPostingFeeNotice extends StatelessWidget {
   const _EmployerPostingFeeNotice({
     required this.jobsPostedCount,
-    required this.verificationPaid,
+    required this.subscriptionActive,
     this.payBusy = false,
-    this.onPayVerification,
+    this.onPaySubscription,
   });
 
   /// Existing rows in `gigs` for this employer (before this draft is submitted).
   final int jobsPostedCount;
-  final bool verificationPaid;
+  final bool subscriptionActive;
   final bool payBusy;
-  final Future<void> Function()? onPayVerification;
+  final Future<void> Function()? onPaySubscription;
 
   @override
   Widget build(BuildContext context) {
     final isFirst = jobsPostedCount == 0;
-    final needsVerification = !isFirst && !verificationPaid;
+    final needsSubscription = !isFirst && !subscriptionActive;
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(14),
@@ -1023,7 +1187,7 @@ class _EmployerPostingFeeNotice extends StatelessWidget {
           Row(
             children: [
               Icon(
-                isFirst ? Icons.celebration_outlined : Icons.verified_user_outlined,
+                isFirst ? Icons.celebration_outlined : Icons.workspace_premium_outlined,
                 size: 22,
                 color: const Color(0xFF1D4ED8),
               ),
@@ -1032,9 +1196,9 @@ class _EmployerPostingFeeNotice extends StatelessWidget {
                 child: Text(
                   isFirst
                       ? 'First job post is free'
-                      : (verificationPaid
-                          ? 'Verification paid — you can post'
-                          : 'Verification & security fee required'),
+                      : (subscriptionActive
+                          ? 'Employer subscription active'
+                          : 'Employer subscription required'),
                   style: GoogleFonts.inter(
                     fontSize: 14,
                     fontWeight: FontWeight.w800,
@@ -1047,11 +1211,16 @@ class _EmployerPostingFeeNotice extends StatelessWidget {
           const SizedBox(height: 8),
           Text(
             isFirst
-                ? 'Your first listing is free (any number of workers on that post). '
-                    'The next listings need a one-time verification & security payment per year.'
-                : (verificationPaid
-                    ? 'Your verification window is active. Turn on “Boost this post” below to pin this job to the top of worker feeds for 7 days.'
-                    : 'You already used your free post. Pay the verification & security fee (demo) before publishing another job.'),
+                ? 'Your first listing and hire are free, including any number of '
+                    'workers on that post. From your second job posting onward, '
+                    'subscribe at ₱${RevenueStubService.employerSubscriptionPhp}/month for '
+                    'unlimited listings and hires.'
+                : (subscriptionActive
+                    ? 'You can post and hire without limits while your plan is active. '
+                        'Optional: boost this post (₱${RevenueStubService.postBoostPhp}) for '
+                        '${RevenueStubService.postBoostValidity.inDays} days at the top of worker feeds.'
+                    : 'You already used your free post. Subscribe (₱${RevenueStubService.employerSubscriptionPhp}/mo, demo pay) '
+                        'to publish more jobs and keep hiring.'),
             style: GoogleFonts.inter(
               fontSize: 12.5,
               fontWeight: FontWeight.w600,
@@ -1059,12 +1228,12 @@ class _EmployerPostingFeeNotice extends StatelessWidget {
               color: const Color(0xFF1E40AF),
             ),
           ),
-          if (needsVerification && onPayVerification != null) ...[
+          if (needsSubscription && onPaySubscription != null) ...[
             const SizedBox(height: 12),
             SizedBox(
               width: double.infinity,
               child: FilledButton.tonal(
-                onPressed: payBusy ? null : onPayVerification,
+                onPressed: payBusy ? null : onPaySubscription,
                 style: FilledButton.styleFrom(
                   backgroundColor: const Color(0xFFDBEAFE),
                   foregroundColor: const Color(0xFF1E3A8A),
@@ -1076,7 +1245,7 @@ class _EmployerPostingFeeNotice extends StatelessWidget {
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
                     : Text(
-                        'Pay verification & security (demo ₱499)',
+                        'Subscribe (demo ₱${RevenueStubService.employerSubscriptionPhp}/mo)',
                         style: GoogleFonts.inter(fontWeight: FontWeight.w800),
                       ),
               ),

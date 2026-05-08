@@ -6,7 +6,8 @@ import '../../../notifications/notification_repository.dart';
 import '../../../payments/payments_repository.dart';
 import '../../../session/session_controller.dart';
 import '../../../shift/shift_repository.dart';
-import '../../../ratings/mock_ratings_repository.dart';
+import '../../../ratings/ratings_repository.dart';
+import '../../../marketplace/marketplace_scope.dart';
 import '../marketplace/worker_gigs_screen.dart';
 import '../marketplace/worker_find_jobs_screen.dart';
 import '../messages/messages_inbox_screen.dart';
@@ -38,7 +39,7 @@ class WorkerDashboardShell extends StatefulWidget {
   final NotificationRepository notifications;
   final PaymentsRepository payments;
   final ShiftRepository shift;
-  final MockRatingsRepository ratings;
+  final RatingsRepository ratings;
   final SessionController session;
 
   @override
@@ -48,6 +49,7 @@ class WorkerDashboardShell extends StatefulWidget {
 class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
   int _index = 0;
   bool _verificationPopupShown = false;
+  int _inboxUnread = 0;
 
   @override
   void initState() {
@@ -62,6 +64,7 @@ class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
       }
       if (mounted) {
         await _syncNotificationBadge();
+        await _syncInboxBadge();
       }
     });
   }
@@ -72,9 +75,22 @@ class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
         builder: (_) => const MessagesInboxScreen(),
       ),
     );
+    if (mounted) {
+      await _syncInboxBadge();
+    }
   }
 
   Future<void> _syncNotificationBadge() async {}
+
+  Future<void> _syncInboxBadge() async {
+    try {
+      final scope = MarketplaceScope.tryOf(context);
+      final n = await scope?.messaging.unreadCount();
+      if (mounted) setState(() => _inboxUnread = n ?? 0);
+    } catch (_) {
+      if (mounted) setState(() => _inboxUnread = 0);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -114,6 +130,7 @@ class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
           payments: widget.payments,
           embedded: true,
           onOpenMessages: _openInbox,
+          inboxUnreadCount: _inboxUnread,
           onOpenNotifications: () async {
             await Navigator.of(context).push(
               MaterialPageRoute<void>(
@@ -138,7 +155,7 @@ class _WorkerDashboardShellState extends State<WorkerDashboardShell> {
           : AgapAppBar(
               onSearchTap: null,
               onInboxTap: _openInbox,
-              inboxUnreadCount: 0,
+              inboxUnreadCount: _inboxUnread,
               onNotificationTap: null,
               notificationUnreadCount: 0,
               extraActions: const [],

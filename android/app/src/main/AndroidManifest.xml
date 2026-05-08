@@ -5,9 +5,10 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <application
-        android:label="nexora"
+        android:label="AgapShift"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@drawable/agapshift_icon"
+        android:roundIcon="@drawable/agapshift_icon">
         <activity
             android:name=".MainActivity"
             android:exported="true"

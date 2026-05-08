@@ -123,6 +123,12 @@ class MockMessagingRepository implements MessagingRepository {
     return out;
   }
 
+  @override
+  Future<int> unreadCount() async {
+    // Mock store does not track read state yet; treat everything as read.
+    return 0;
+  }
+
   String _shortPeer(String id) {
     final t = id.trim();
     if (t.contains('@')) return t.split('@').first;

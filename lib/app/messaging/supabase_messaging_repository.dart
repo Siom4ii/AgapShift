@@ -89,6 +89,50 @@ class SupabaseMessagingRepository implements MessagingRepository {
     return merged;
   }
 
+  @override
+  Future<int> unreadCount() async {
+    final me = _me;
+    if (me == null) return 0;
+    final memRows = await _client
+        .from('dm_conversation_members')
+        .select('conversation_id,last_read_at')
+        .eq('user_id', me);
+    final memList = memRows as List<dynamic>;
+    if (memList.isEmpty) return 0;
+
+    var total = 0;
+    for (final raw in memList) {
+      final m = Map<String, dynamic>.from(raw as Map);
+      final cid = m['conversation_id'] as String?;
+      if (cid == null || cid.isEmpty) continue;
+      final lastReadRaw = m['last_read_at'];
+      final lastRead = lastReadRaw == null
+          ? null
+          : DateTime.tryParse(lastReadRaw.toString());
+
+      // Count messages from OTHER user after last_read_at.
+      // Note: per-conversation read timestamps prevent a clean single query, so we loop.
+      dynamic res;
+      if (lastRead == null) {
+        res = await _client
+            .from('dm_messages')
+            .select('id')
+            .eq('conversation_id', cid)
+            .neq('sender_id', me);
+      } else {
+        res = await _client
+            .from('dm_messages')
+            .select('id')
+            .eq('conversation_id', cid)
+            .neq('sender_id', me)
+            .gt('created_at', lastRead.toUtc().toIso8601String());
+      }
+      final list = res as List<dynamic>;
+      total += list.length;
+    }
+    return total;
+  }
+
   String _peerFallback(String id) {
     final t = id.trim();
     if (t.length <= 12) return t;

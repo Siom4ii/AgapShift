@@ -6,13 +6,13 @@ import '../../../../domain/models.dart';
 import '../../../notifications/notification_repository.dart';
 import '../../../marketplace/marketplace_repository.dart';
 import '../../../payments/payments_repository.dart';
-import '../../../ratings/mock_ratings_repository.dart';
+import '../../../ratings/ratings_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../../shift/shift_repository.dart';
 import '../../theme/agap_colors.dart';
-import 'business_gig_applicants_screen.dart';
 import '../../widgets/success_feedback.dart';
+import 'business_gig_manage_screen.dart';
 
 class BusinessGigsScreen extends StatefulWidget {
   const BusinessGigsScreen({
@@ -30,7 +30,7 @@ class BusinessGigsScreen extends StatefulWidget {
   final MarketplaceRepository repo;
   final NotificationRepository notifications;
   final PaymentsRepository payments;
-  final MockRatingsRepository ratings;
+  final RatingsRepository ratings;
   final SessionController session;
   final ShiftRepository shiftRepo;
   final bool embedded;
@@ -155,16 +155,16 @@ class _BusinessGigsScreenState extends State<BusinessGigsScreen> {
       )
       .length;
 
-  Future<void> _openApplicants(Gig g) async {
+  Future<void> _openManage(Gig g) async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
-        builder: (_) => BusinessGigApplicantsScreen(
+        builder: (_) => BusinessGigManageScreen(
+          gig: g,
+          session: widget.session,
           repo: widget.repo,
           notifications: widget.notifications,
-          session: widget.session,
           ratings: widget.ratings,
           shiftRepo: widget.shiftRepo,
-          gig: g,
         ),
       ),
     );
@@ -221,7 +221,9 @@ class _BusinessGigsScreenState extends State<BusinessGigsScreen> {
                       final payDay = (g.pay.amount / 100).round();
                       final canCancel = g.status != GigStatus.cancelled &&
                           g.status != GigStatus.completed;
+                      final expired = g.endAt.isBefore(DateTime.now().toUtc());
                       final listingInactive =
+                          expired ||
                           g.status == GigStatus.cancelled ||
                           g.status == GigStatus.completed;
 
@@ -232,8 +234,8 @@ class _BusinessGigsScreenState extends State<BusinessGigsScreen> {
                         cardIconIndex: i,
                         showCancelAction: canCancel,
                         listingInactive: listingInactive,
-                        statusLabel: _statusLabel(g.status),
-                        onReviewApplicants: () => _openApplicants(g),
+                        statusLabel: _statusLabel(g, expired: expired),
+                        onOpenDetails: () => _openManage(g),
                         onCancelListing: () => _confirmCancel(g),
                       );
                     },
@@ -311,13 +313,18 @@ class _BusinessGigsScreenState extends State<BusinessGigsScreen> {
     );
   }
 
-  String _statusLabel(GigStatus s) => switch (s) {
-        GigStatus.open => 'Open',
-        GigStatus.filled => 'Filled',
-        GigStatus.ongoing => 'Ongoing',
-        GigStatus.completed => 'Completed',
-        GigStatus.cancelled => 'Cancelled',
-      };
+  String _statusLabel(Gig g, {required bool expired}) {
+    if (g.status == GigStatus.cancelled) return 'Cancelled';
+    if (g.status == GigStatus.completed) return 'Completed';
+    if (expired) return 'Expired';
+    return switch (g.status) {
+      GigStatus.open => 'Open',
+      GigStatus.filled => 'Filled',
+      GigStatus.ongoing => 'Ongoing',
+      GigStatus.completed => 'Completed',
+      GigStatus.cancelled => 'Cancelled',
+    };
+  }
 }
 
 class _JobPostCard extends StatelessWidget {
@@ -329,7 +336,7 @@ class _JobPostCard extends StatelessWidget {
     required this.showCancelAction,
     required this.listingInactive,
     required this.statusLabel,
-    required this.onReviewApplicants,
+    required this.onOpenDetails,
     required this.onCancelListing,
   });
 
@@ -340,7 +347,7 @@ class _JobPostCard extends StatelessWidget {
   final bool showCancelAction;
   final bool listingInactive;
   final String statusLabel;
-  final VoidCallback onReviewApplicants;
+  final VoidCallback onOpenDetails;
   final VoidCallback onCancelListing;
 
   static const _categoryIcons = [
@@ -354,8 +361,13 @@ class _JobPostCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final icon = _categoryIcons[cardIconIndex % _categoryIcons.length];
 
-    return Container(
-      decoration: BoxDecoration(
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onOpenDetails,
+        borderRadius: BorderRadius.circular(20),
+        child: Ink(
+          decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(20),
         border: Border.all(
@@ -427,7 +439,7 @@ class _JobPostCard extends StatelessWidget {
               children: [
                 Expanded(
                   child: FilledButton(
-                    onPressed: onReviewApplicants,
+                    onPressed: onOpenDetails,
                     style: FilledButton.styleFrom(
                       backgroundColor: listingInactive
                           ? const Color(0xFFE5E7EB)
@@ -450,9 +462,7 @@ class _JobPostCard extends StatelessWidget {
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
-                          listingInactive
-                              ? 'View applicants'
-                              : 'Review applicants',
+                          'View listing',
                           style: GoogleFonts.inter(
                             fontWeight: FontWeight.w800,
                             fontSize: 14,
@@ -515,6 +525,8 @@ class _JobPostCard extends StatelessWidget {
           ],
         ),
       ),
+        ),
+      ),
     );
   }
 }
@@ -531,6 +543,8 @@ class _StatusPill extends StatelessWidget {
       case 'Filled':
       case 'Ongoing':
         return const Color(0xFFEFF6FF);
+      case 'Expired':
+        return const Color(0xFFFFFBEB);
       case 'Completed':
         return const Color(0xFFF3F4F6);
       case 'Cancelled':
@@ -547,6 +561,8 @@ class _StatusPill extends StatelessWidget {
       case 'Filled':
       case 'Ongoing':
         return const Color(0xFF1D4ED8);
+      case 'Expired':
+        return const Color(0xFFB45309);
       case 'Completed':
         return AgapColors.textMuted;
       case 'Cancelled':

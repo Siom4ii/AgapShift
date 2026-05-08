@@ -10,13 +10,16 @@ import '../../../../domain/models.dart';
 import '../../../marketplace/marketplace_repository.dart';
 import '../../../payments/payments_repository.dart';
 import '../../../profile/worker_display_names.dart';
-import '../../../ratings/mock_ratings_repository.dart';
+import '../../../ratings/ratings_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../../supabase/supabase_config.dart';
 import '../../theme/agap_colors.dart';
 import '../../widgets/shell_screen_polish.dart';
 import '../../widgets/verification_status_card.dart';
+import '../subscriptions/employer_subscription_screen.dart';
+import 'business_hiring_history_screen.dart';
+import '../ratings/user_ratings_screen.dart';
 
 class BusinessProfileScreen extends StatefulWidget {
   const BusinessProfileScreen({
@@ -33,11 +36,12 @@ class BusinessProfileScreen extends StatefulWidget {
     this.onOpenNotifications,
     this.onOpenInbox,
     this.notificationUnreadCount = 0,
+    this.inboxUnreadCount = 0,
   });
 
   final SessionController session;
   final MarketplaceRepository marketRepo;
-  final MockRatingsRepository ratings;
+  final RatingsRepository ratings;
   final PaymentsRepository? payments;
   final bool embedded;
   final bool showFollowFab;
@@ -45,6 +49,7 @@ class BusinessProfileScreen extends StatefulWidget {
   final VoidCallback? onOpenNotifications;
   final VoidCallback? onOpenInbox;
   final int notificationUnreadCount;
+  final int inboxUnreadCount;
 
   @override
   State<BusinessProfileScreen> createState() => _BusinessProfileScreenState();
@@ -232,9 +237,21 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
                     recentHires: _recentHires,
                     session: widget.session,
                     onLogout: widget.onLogout,
+                    onOpenHiringHistory: () {
+                      Navigator.of(context).push<void>(
+                        MaterialPageRoute<void>(
+                          builder: (_) => BusinessHiringHistoryScreen(
+                            session: widget.session,
+                            marketRepo: widget.marketRepo,
+                            ratings: widget.ratings,
+                          ),
+                        ),
+                      );
+                    },
                     onOpenNotifications: widget.onOpenNotifications,
                     onOpenInbox: widget.onOpenInbox,
                     notificationUnreadCount: widget.notificationUnreadCount,
+                    inboxUnreadCount: widget.inboxUnreadCount,
                   ),
                 ] else ...[
                   if (!widget.showFollowFab) ...[
@@ -354,23 +371,48 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
                       fontWeight: FontWeight.w800,
                     ),
                   ),
+                  const SizedBox(height: 4),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton(
+                      onPressed: () {
+                        final userId = appActorId(widget.session, mockFallback: '');
+                        if (userId.isEmpty) return;
+                        Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(
+                            builder: (_) => UserRatingsScreen(
+                              ratings: widget.ratings,
+                              userId: userId,
+                              title: 'Business reviews',
+                            ),
+                          ),
+                        );
+                      },
+                      child: Text(
+                        'View all reviews',
+                        style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+                      ),
+                    ),
+                  ),
                   const SizedBox(height: 12),
                   if (_reviews.isEmpty) ...[
-                    _ReviewCard(
-                      name: 'Michael T.',
-                      shifts: 5,
-                      stars: 5,
-                      body: _demoReviewBody,
+                    Padding(
+                      padding: const EdgeInsets.only(top: 6),
+                      child: Text(
+                        'No reviews yet.',
+                        style: GoogleFonts.inter(
+                          fontWeight: FontWeight.w700,
+                          color: AgapColors.textMuted,
+                        ),
+                      ),
                     ),
                   ] else
                     ..._reviews.map(
                       (r) => _ReviewCard(
-                        name: 'Worker ${r.raterUserId.split('@').first}',
-                        shifts: 3 + r.stars,
+                        name: 'Review',
+                        shifts: 0,
                         stars: r.stars,
-                        body:
-                            r.feedback ??
-                            'Reliable and professional on every shift.',
+                        body: r.feedback ?? 'No comment provided.',
                       ),
                     ),
                 ],
@@ -439,9 +481,6 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
   }
 }
 
-const _demoReviewBody =
-    'Outstanding partner — clear instructions, safe warehouse, and fair pay. Highly recommend for gig workers.';
-
 class _RecentHireVm {
   const _RecentHireVm({
     required this.workerId,
@@ -484,9 +523,11 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
     required this.recentHires,
     required this.session,
     required this.onLogout,
+    this.onOpenHiringHistory,
     this.onOpenNotifications,
     this.onOpenInbox,
     this.notificationUnreadCount = 0,
+    this.inboxUnreadCount = 0,
   });
 
   final String bizName;
@@ -500,9 +541,11 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
   final List<_RecentHireVm> recentHires;
   final SessionController session;
   final Future<void> Function()? onLogout;
+  final VoidCallback? onOpenHiringHistory;
   final VoidCallback? onOpenNotifications;
   final VoidCallback? onOpenInbox;
   final int notificationUnreadCount;
+  final int inboxUnreadCount;
 
   static final _headerGradient = LinearGradient(
     colors: [
@@ -531,362 +574,364 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Tall enough that the profile card + verified footer never paint under the stats strip.
-    final headerStackHeight = verified ? 332.0 : 252.0;
-
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(
-          height: headerStackHeight,
-          child: Stack(
-            clipBehavior: Clip.none,
-            children: [
-              Positioned(
-                left: 0,
-                right: 0,
-                top: 0,
-                height: 120,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(gradient: _headerGradient),
-                  child: Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 10, 8, 0),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'Business Profile',
-                            style: GoogleFonts.inter(
-                              fontSize: 22,
-                              fontWeight: FontWeight.w800,
-                              color: Colors.white,
-                            ),
+        DecoratedBox(
+          decoration: BoxDecoration(gradient: _headerGradient),
+          child: SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 8, 16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          'Business Profile',
+                          style: GoogleFonts.inter(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
                           ),
                         ),
-                        if (onOpenInbox != null)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 4),
-                            child: Material(
-                              color: Colors.white.withValues(alpha: 0.2),
-                              shape: const CircleBorder(),
-                              clipBehavior: Clip.antiAlias,
-                              child: IconButton(
-                                icon: const Icon(
+                      ),
+                      if (onOpenInbox != null)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 4),
+                          child: Material(
+                            color: Colors.white.withValues(alpha: 0.2),
+                            shape: const CircleBorder(),
+                            clipBehavior: Clip.antiAlias,
+                            child: IconButton(
+                              icon: Badge(
+                                isLabelVisible: inboxUnreadCount > 0,
+                                label: Text(
+                                  inboxUnreadCount > 99 ? '99+' : '$inboxUnreadCount',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                backgroundColor: Colors.red.shade600,
+                                child: const Icon(
                                   Icons.chat_bubble_outline_rounded,
                                   color: Colors.white,
                                   size: 22,
                                 ),
-                                onPressed: onOpenInbox,
-                                tooltip: 'Messages',
                               ),
+                              onPressed: onOpenInbox,
+                              tooltip: 'Messages',
                             ),
                           ),
-                        if (onOpenNotifications != null)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 4),
-                            child: Material(
-                              color: Colors.white.withValues(alpha: 0.2),
-                              shape: const CircleBorder(),
-                              clipBehavior: Clip.antiAlias,
-                              child: IconButton(
-                                icon: Badge(
-                                  isLabelVisible: notificationUnreadCount > 0,
-                                  label: Text(
-                                    notificationUnreadCount > 99
-                                        ? '99+'
-                                        : '$notificationUnreadCount',
-                                    style: GoogleFonts.inter(
-                                      fontSize: 10,
-                                      fontWeight: FontWeight.w800,
-                                      color: Colors.white,
-                                    ),
-                                  ),
-                                  backgroundColor: Colors.red.shade600,
-                                  child: const Icon(
-                                    Icons.notifications_outlined,
+                        ),
+                      if (onOpenNotifications != null)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 4),
+                          child: Material(
+                            color: Colors.white.withValues(alpha: 0.2),
+                            shape: const CircleBorder(),
+                            clipBehavior: Clip.antiAlias,
+                            child: IconButton(
+                              icon: Badge(
+                                isLabelVisible: notificationUnreadCount > 0,
+                                label: Text(
+                                  notificationUnreadCount > 99
+                                      ? '99+'
+                                      : '$notificationUnreadCount',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w800,
                                     color: Colors.white,
-                                    size: 22,
                                   ),
                                 ),
-                                onPressed: onOpenNotifications,
-                                tooltip: 'Notifications',
-                              ),
-                            ),
-                          ),
-                        Material(
-                          color: Colors.white.withValues(alpha: 0.2),
-                          shape: const CircleBorder(),
-                          child: IconButton(
-                            icon: const Icon(
-                              Icons.edit_outlined,
-                              color: Colors.white,
-                            ),
-                            onPressed: () {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Edit profile (demo)'),
-                                ),
-                              );
-                            },
-                            tooltip: 'Edit',
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-              Positioned(
-                left: 12,
-                right: 12,
-                top: 68,
-                child: Material(
-                  elevation: 8,
-                  shadowColor: Colors.black.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(16),
-                  color: Colors.white,
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Container(
-                              width: 56,
-                              height: 56,
-                              decoration: BoxDecoration(
-                                color: AgapColors.businessGreen,
-                                borderRadius: BorderRadius.circular(12),
-                              ),
-                              alignment: Alignment.center,
-                              child: Text(
-                                _initials,
-                                style: GoogleFonts.inter(
-                                  fontSize: 18,
-                                  fontWeight: FontWeight.w800,
+                                backgroundColor: Colors.red.shade600,
+                                child: const Icon(
+                                  Icons.notifications_outlined,
                                   color: Colors.white,
+                                  size: 22,
                                 ),
                               ),
+                              onPressed: onOpenNotifications,
+                              tooltip: 'Notifications',
                             ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Row(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.start,
-                                    children: [
-                                      Expanded(
-                                        child: Text(
-                                          bizName,
-                                          style: GoogleFonts.inter(
-                                            fontSize: 18,
-                                            fontWeight: FontWeight.w800,
-                                            color: const Color(0xFF111827),
-                                            height: 1.2,
-                                          ),
-                                        ),
-                                      ),
-                                      if (verified)
-                                        Padding(
-                                          padding: const EdgeInsets.only(
-                                            left: 6,
-                                          ),
-                                          child: Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 8,
-                                              vertical: 4,
-                                            ),
-                                            decoration: BoxDecoration(
-                                              color: AgapColors.mintSurface,
-                                              borderRadius:
-                                                  BorderRadius.circular(20),
-                                            ),
-                                            child: Row(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Icon(
-                                                  Icons.verified_rounded,
-                                                  size: 14,
-                                                  color:
-                                                      AgapColors.businessGreen,
-                                                ),
-                                                const SizedBox(width: 4),
-                                                Text(
-                                                  'Verified',
-                                                  style: GoogleFonts.inter(
-                                                    fontSize: 11,
-                                                    fontWeight: FontWeight.w800,
-                                                    color: AgapColors
-                                                        .primaryBright,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    tagline,
-                                    style: GoogleFonts.inter(
-                                      fontSize: 13,
-                                      color: AgapColors.textMuted,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 10),
-                                  Row(
-                                    children: [
-                                      ...List.generate(
-                                        5,
-                                        (i) => Padding(
-                                          padding: const EdgeInsets.only(
-                                            right: 2,
-                                          ),
-                                          child: Icon(
-                                            Icons.star_rounded,
-                                            size: 20,
-                                            color: i <
-                                                    math.min(
-                                                      5,
-                                                      ratingShow.round(),
-                                                    ) &&
-                                                ratingShow > 0
-                                                ? const Color(0xFFEAB308)
-                                                : AgapColors.borderSubtle,
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      Text(
-                                        ratingShow > 0
-                                            ? ratingShow.toStringAsFixed(1)
-                                            : '—',
-                                        style: GoogleFonts.inter(
-                                          fontWeight: FontWeight.w800,
-                                          fontSize: 16,
-                                          color: const Color(0xFFEAB308),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
+                          ),
                         ),
-                        const SizedBox(height: 12),
-                        if (addressLine != null &&
-                            addressLine!.trim().isNotEmpty) ...[
+                      Material(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        shape: const CircleBorder(),
+                        child: IconButton(
+                          icon: const Icon(
+                            Icons.edit_outlined,
+                            color: Colors.white,
+                          ),
+                          onPressed: () {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Edit profile (demo)'),
+                              ),
+                            );
+                          },
+                          tooltip: 'Edit',
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  Material(
+                    elevation: 8,
+                    shadowColor: Colors.black.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(16),
+                    color: Colors.white,
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
                           Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(
-                                Icons.place_outlined,
-                                size: 20,
-                                color: AgapColors.textMuted,
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
+                              Container(
+                                width: 56,
+                                height: 56,
+                                decoration: BoxDecoration(
+                                  color: AgapColors.businessGreen,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                alignment: Alignment.center,
                                 child: Text(
-                                  addressLine!,
+                                  _initials,
                                   style: GoogleFonts.inter(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: const Color(0xFF374151),
-                                    height: 1.35,
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.w800,
+                                    color: Colors.white,
                                   ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            bizName,
+                                            style: GoogleFonts.inter(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.w800,
+                                              color: const Color(0xFF111827),
+                                              height: 1.2,
+                                            ),
+                                          ),
+                                        ),
+                                        if (verified)
+                                          Padding(
+                                            padding: const EdgeInsets.only(
+                                              left: 6,
+                                            ),
+                                            child: Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                horizontal: 8,
+                                                vertical: 4,
+                                              ),
+                                              decoration: BoxDecoration(
+                                                color: AgapColors.mintSurface,
+                                                borderRadius:
+                                                    BorderRadius.circular(20),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  Icon(
+                                                    Icons.verified_rounded,
+                                                    size: 14,
+                                                    color: AgapColors
+                                                        .businessGreen,
+                                                  ),
+                                                  const SizedBox(width: 4),
+                                                  Text(
+                                                    'Verified',
+                                                    style: GoogleFonts.inter(
+                                                      fontSize: 11,
+                                                      fontWeight:
+                                                          FontWeight.w800,
+                                                      color: AgapColors
+                                                          .primaryBright,
+                                                    ),
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      tagline,
+                                      style: GoogleFonts.inter(
+                                        fontSize: 13,
+                                        color: AgapColors.textMuted,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    Row(
+                                      children: [
+                                        ...List.generate(
+                                          5,
+                                          (i) => Padding(
+                                            padding: const EdgeInsets.only(
+                                              right: 2,
+                                            ),
+                                            child: Icon(
+                                              Icons.star_rounded,
+                                              size: 20,
+                                              color: i <
+                                                          math.min(
+                                                            5,
+                                                            ratingShow.round(),
+                                                          ) &&
+                                                      ratingShow > 0
+                                                  ? const Color(0xFFEAB308)
+                                                  : AgapColors.borderSubtle,
+                                            ),
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Text(
+                                          ratingShow > 0
+                                              ? ratingShow.toStringAsFixed(1)
+                                              : '—',
+                                          style: GoogleFonts.inter(
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 16,
+                                            color: const Color(0xFFEAB308),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
                                 ),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 8),
-                        ],
-                        if (phone != null && phone!.trim().isNotEmpty) ...[
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.phone_outlined,
-                                size: 20,
-                                color: const Color(0xFFDB2777),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: Text(
-                                  phone!,
-                                  style: GoogleFonts.inter(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: const Color(0xFF374151),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                        if ((addressLine == null || addressLine!.trim().isEmpty) &&
-                            (phone == null || phone!.trim().isEmpty))
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.place_outlined,
-                                size: 20,
-                                color: AgapColors.textMuted,
-                              ),
-                              const SizedBox(width: 16),
-                              Icon(
-                                Icons.phone_outlined,
-                                size: 20,
-                                color: const Color(0xFFDB2777),
-                              ),
-                            ],
-                          ),
-                        if (verified) ...[
-                          Padding(
-                            padding: const EdgeInsets.only(top: 14),
-                            child: Divider(
-                              height: 1,
-                              color: AgapColors.borderSubtle,
-                            ),
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.only(top: 10),
-                            child: Row(
+                          const SizedBox(height: 12),
+                          if (addressLine != null &&
+                              addressLine!.trim().isNotEmpty) ...[
+                            Row(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Icon(
-                                  Icons.verified_rounded,
+                                  Icons.place_outlined,
                                   size: 20,
-                                  color: AgapColors.businessGreen,
+                                  color: AgapColors.textMuted,
                                 ),
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(
-                                    'Account verified · Full access to AgapShift features',
+                                    addressLine!,
                                     style: GoogleFonts.inter(
                                       fontSize: 13,
                                       fontWeight: FontWeight.w600,
-                                      color: AgapColors.businessGreen,
+                                      color: const Color(0xFF374151),
                                       height: 1.35,
                                     ),
                                   ),
                                 ),
                               ],
                             ),
-                          ),
+                            const SizedBox(height: 8),
+                          ],
+                          if (phone != null && phone!.trim().isNotEmpty) ...[
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.phone_outlined,
+                                  size: 20,
+                                  color: const Color(0xFFDB2777),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    phone!,
+                                    style: GoogleFonts.inter(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w600,
+                                      color: const Color(0xFF374151),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                          if ((addressLine == null ||
+                                  addressLine!.trim().isEmpty) &&
+                              (phone == null || phone!.trim().isEmpty))
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.place_outlined,
+                                  size: 20,
+                                  color: AgapColors.textMuted,
+                                ),
+                                const SizedBox(width: 16),
+                                Icon(
+                                  Icons.phone_outlined,
+                                  size: 20,
+                                  color: const Color(0xFFDB2777),
+                                ),
+                              ],
+                            ),
+                          if (verified) ...[
+                            Padding(
+                              padding: const EdgeInsets.only(top: 14),
+                              child: Divider(
+                                height: 1,
+                                color: AgapColors.borderSubtle,
+                              ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.only(top: 10),
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Icon(
+                                    Icons.verified_rounded,
+                                    size: 20,
+                                    color: AgapColors.businessGreen,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Expanded(
+                                    child: Text(
+                                      'Account verified · Full access to AgapShift features',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                        color: AgapColors.businessGreen,
+                                        height: 1.35,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
                         ],
-                      ],
+                      ),
                     ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
         ),
         const SizedBox(height: 12),
@@ -966,27 +1011,26 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
           child: Column(
             children: [
               _SlimProfileTile(
-                icon: Icons.description_outlined,
-                title: 'Business Documents',
-                onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Business documents')),
-                ),
+                icon: Icons.workspace_premium_outlined,
+                title: 'Employer subscription',
+                onTap: () {
+                  Navigator.of(context).push<void>(
+                    MaterialPageRoute<void>(
+                      builder: (_) => EmployerSubscriptionScreen(
+                        session: session,
+                      ),
+                    ),
+                  );
+                },
               ),
               const Divider(height: 1),
               _SlimProfileTile(
                 icon: Icons.history_rounded,
                 title: 'Hiring History',
-                onTap: () => ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(const SnackBar(content: Text('Hiring history'))),
-              ),
-              const Divider(height: 1),
-              _SlimProfileTile(
-                icon: Icons.insights_outlined,
-                title: 'Expense Analytics',
-                onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Expense analytics')),
-                ),
+                onTap: onOpenHiringHistory ??
+                    () => ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Hiring history')),
+                        ),
               ),
               const Divider(height: 1),
               _SlimProfileTile(
@@ -1190,60 +1234,86 @@ class _RecentHireRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final avatarR = dense ? 18.0 : 20.0;
-    return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: dense ? 12 : 10,
-        vertical: dense ? 10 : 6,
-      ),
-      child: Row(
-        children: [
-          CircleAvatar(
-            radius: avatarR,
-            backgroundColor: AgapColors.businessGreenDeep,
-            child: Text(
-              _avatarText,
-              style: GoogleFonts.inter(
-                color: Colors.white,
-                fontWeight: FontWeight.w800,
-                fontSize: initials != null && initials!.length > 1 ? 11 : 14,
-              ),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final narrow = constraints.maxWidth < 360;
+        final amountText = Text(
+          amount,
+          style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+        );
+        final starsRow = Row(
+          mainAxisSize: MainAxisSize.min,
+          children: List.generate(
+            5,
+            (i) => Icon(
+              Icons.star_rounded,
+              size: 16,
+              color: i < stars
+                  ? const Color(0xFFEAB308)
+                  : AgapColors.borderSubtle,
             ),
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  name,
-                  style: GoogleFonts.inter(fontWeight: FontWeight.w800),
-                ),
-                Text(
-                  '$role · $when',
+        );
+
+        return Padding(
+          padding: EdgeInsets.symmetric(
+            horizontal: dense ? 12 : 10,
+            vertical: dense ? 10 : 6,
+          ),
+          child: Row(
+            crossAxisAlignment: narrow
+                ? CrossAxisAlignment.start
+                : CrossAxisAlignment.center,
+            children: [
+              CircleAvatar(
+                radius: avatarR,
+                backgroundColor: AgapColors.businessGreenDeep,
+                child: Text(
+                  _avatarText,
                   style: GoogleFonts.inter(
-                    fontSize: 12,
-                    color: AgapColors.textMuted,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                    fontSize: initials != null && initials!.length > 1 ? 11 : 14,
                   ),
                 ),
-              ],
-            ),
-          ),
-          Text(amount, style: GoogleFonts.inter(fontWeight: FontWeight.w800)),
-          const SizedBox(width: 8),
-          Row(
-            children: List.generate(
-              5,
-              (i) => Icon(
-                Icons.star_rounded,
-                size: 16,
-                color: i < stars
-                    ? const Color(0xFFEAB308)
-                    : AgapColors.borderSubtle,
               ),
-            ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      name,
+                      style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+                    ),
+                    Text(
+                      '$role · $when',
+                      style: GoogleFonts.inter(
+                        fontSize: 12,
+                        color: AgapColors.textMuted,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (narrow)
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    amountText,
+                    const SizedBox(height: 4),
+                    starsRow,
+                  ],
+                )
+              else ...[
+                amountText,
+                const SizedBox(width: 8),
+                starsRow,
+              ],
+            ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

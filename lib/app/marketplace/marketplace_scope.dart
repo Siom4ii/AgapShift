@@ -10,6 +10,8 @@ import '../payments/mock_payments_repository.dart';
 import '../payments/payments_repository.dart';
 import '../payments/stub_payments_repository.dart';
 import '../ratings/mock_ratings_repository.dart';
+import '../ratings/ratings_repository.dart';
+import '../ratings/supabase_ratings_repository.dart';
 import '../session/session_controller.dart';
 import '../shift/mock_shift_repository.dart';
 import '../shift/shift_repository.dart';
@@ -36,7 +38,7 @@ class MarketplaceScope extends InheritedWidget {
   final MarketplaceRepository repo;
   final NotificationRepository notifications;
   final PaymentsRepository payments;
-  final MockRatingsRepository ratings;
+  final RatingsRepository ratings;
   final ShiftRepository shift;
   final MessagingRepository messaging;
   final SessionController session;
@@ -66,7 +68,9 @@ class MarketplaceScope extends InheritedWidget {
       payments: SupabaseConfig.isConfigured
           ? StubPaymentsRepository()
           : MockPaymentsRepository(store),
-      ratings: MockRatingsRepository(store),
+      ratings: SupabaseConfig.isConfigured
+          ? SupabaseRatingsRepository()
+          : MockRatingsRepository(store),
       shift: SupabaseConfig.isConfigured
           ? SupabaseShiftRepository()
           : MockShiftRepository(store),

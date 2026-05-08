@@ -715,7 +715,7 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
                           _businessNames[g.businessId] ?? 'Business',
                       applied: _appliedGigIds.contains(g.id),
                       distanceKm:
-                          geoDistanceMetersApprox(_searchCenter, g.location) /
+                          geoDistanceMeters(_searchCenter, g.location) /
                               1000.0,
                       onTap: () async {
                         await Navigator.of(context).push<void>(

@@ -103,3 +103,23 @@ String? _str(dynamic v) {
   final s = v.toString().trim();
   return s.isEmpty ? null : s;
 }
+
+/// Municipality from worker onboarding (`personal.municipality`), if present.
+String? workerMunicipalityFromIdentitySnapshot(dynamic raw) {
+  if (raw == null || raw is! Map) return null;
+  final top = Map<String, dynamic>.from(raw);
+
+  final Map<String, dynamic> m;
+  final flow = top['flow']?.toString();
+  if (flow == 'worker' && top['data'] is Map) {
+    m = Map<String, dynamic>.from(top['data']! as Map);
+  } else if (top['personal'] is Map) {
+    m = top;
+  } else {
+    return null;
+  }
+
+  final personal = m['personal'];
+  if (personal is! Map) return null;
+  return _str(Map<String, dynamic>.from(personal)['municipality']);
+}

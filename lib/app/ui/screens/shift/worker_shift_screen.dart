@@ -3,7 +3,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
-import 'package:qr_flutter/qr_flutter.dart';
 
 import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
@@ -14,10 +13,12 @@ import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../../location/davao_del_sur_scope.dart';
 import '../../../profile/worker_display_names.dart';
+import '../../../ratings/ratings_repository.dart';
 import '../../../shift/shift_repository.dart';
 import '../../theme/agap_colors.dart';
 import '../../widgets/shell_screen_polish.dart';
 import '../ratings/rate_user_screen.dart';
+import 'worker_attendance_scan_screen.dart';
 
 class WorkerShiftScreen extends StatefulWidget {
   const WorkerShiftScreen({
@@ -47,14 +48,12 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
   /// Local calendar day selected for QR & summary (start of day).
   DateTime? _selectedWorkDayLocal;
   GeoPoint _distanceAnchor = DavaoDelSurScope.defaultCenter;
-  /// Cached worker attendance QR (regenerated periodically so it stays valid).
-  String _attendanceQrPayload = '';
   String? _ratingPromptedForGigId;
+  int _ratingRefreshTick = 0;
   /// Employer display + gig category (under job title). Never raw UUIDs.
   String _employerLine = '';
 
   Timer? _timer;
-  Timer? _qrRegenTimer;
   DateTime _now = DateTime.now();
 
   @override
@@ -65,16 +64,11 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
       if (!mounted) return;
       setState(() => _now = DateTime.now());
     });
-    _qrRegenTimer = Timer.periodic(const Duration(minutes: 8), (_) {
-      if (!mounted) return;
-      _regenAttendanceQrIfNeeded();
-    });
   }
 
   @override
   void dispose() {
     _timer?.cancel();
-    _qrRegenTimer?.cancel();
     super.dispose();
   }
 
@@ -123,39 +117,22 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
     return '${months[l.month - 1]} ${l.day}';
   }
 
-  void _regenAttendanceQrIfNeeded() {
-    final gig = _gig;
-    final workerId = appActorId(widget.session, mockFallback: '');
-    final day = _selectedWorkDayLocal;
-    if (gig == null || workerId.isEmpty || _isAwaitingHire || day == null) {
-      if (_attendanceQrPayload.isNotEmpty) {
-        setState(() => _attendanceQrPayload = '');
-      }
-      return;
+  Future<void> _openScan({
+    required Gig gig,
+    required String workerId,
+  }) async {
+    final ok = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => WorkerAttendanceScanScreen(
+          shiftRepo: widget.shiftRepo,
+          gig: gig,
+          workerId: workerId,
+        ),
+      ),
+    );
+    if (ok == true) {
+      await _load();
     }
-
-    final sum = _summaryForDay(day);
-    final checkIn = sum?.checkIn?.toLocal();
-    final checkOut = sum?.checkOut?.toLocal();
-    final canCheckIn = checkIn == null;
-    final canCheckOut = checkIn != null && checkOut == null;
-    if (!canCheckIn && !canCheckOut) {
-      if (_attendanceQrPayload.isNotEmpty) {
-        setState(() => _attendanceQrPayload = '');
-      }
-      return;
-    }
-
-    final type =
-        canCheckOut ? AttendanceScanType.checkOut : AttendanceScanType.checkIn;
-    setState(() {
-      _attendanceQrPayload = widget.shiftRepo.createWorkerAttendanceQr(
-        gigId: gig.id,
-        workerId: workerId,
-        type: type,
-        workDay: day,
-      );
-    });
   }
 
   Future<void> _load() async {
@@ -189,10 +166,38 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
           if (g.status == GigStatus.cancelled) continue;
           hiredGigs.add(g);
         }
+        // Prefer the active/nearest hired gig (not just the oldest one),
+        // otherwise workers can be shown the wrong shift and see "Pending".
+        final now = DateTime.now().toUtc();
+        Gig? pickNearest(List<Gig> list) {
+          if (list.isEmpty) return null;
+          Gig? best;
+          int? bestScore;
+          for (final g in list) {
+            final s = g.startAt.toUtc();
+            final e = g.endAt.toUtc();
+            final int score;
+            if (!now.isBefore(s) && now.isBefore(e)) {
+              // Active gigs first.
+              score = 0;
+            } else if (now.isBefore(s)) {
+              // Upcoming: sooner is better.
+              score = 10 + s.difference(now).inMinutes.abs();
+            } else {
+              // Past: most recently ended is better.
+              score = 1000 + now.difference(e).inMinutes.abs();
+            }
+            if (best == null || (bestScore != null && score < bestScore)) {
+              best = g;
+              bestScore = score;
+            }
+          }
+          return best ?? list.first;
+        }
         hiredGigs.sort((a, b) => a.startAt.compareTo(b.startAt));
 
         if (hiredGigs.isNotEmpty) {
-          selected = hiredGigs.first;
+          selected = pickNearest(hiredGigs);
           awaitingHire = false;
         } else {
           final pendingGigs = <Gig>[];
@@ -229,10 +234,17 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
         );
         final span = _gigCalendarDays(selected);
         if (span.isNotEmpty) {
-          final now = DateTime.now();
-          final today = DateTime(now.year, now.month, now.day);
+          final n = DateTime.now();
+          final today = DateTime(n.year, n.month, n.day);
+          final startLocal = selected.startAt.toLocal();
+          final endLocal = selected.endAt.toLocal();
+          final startDay = DateTime(startLocal.year, startLocal.month, startLocal.day);
+          final endDay = DateTime(endLocal.year, endLocal.month, endLocal.day);
+          final preferredDay = (today.isBefore(startDay) || today.isAfter(endDay))
+              ? startDay
+              : today;
           selectedDay = span.firstWhere(
-            (d) => _ymdLocal(d) == _ymdLocal(today),
+            (d) => _ymdLocal(d) == _ymdLocal(preferredDay),
             orElse: () => span.first,
           );
         }
@@ -252,7 +264,6 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
         _selectedWorkDayLocal = selectedDay;
         _employerLine = employerLine;
       });
-      _regenAttendanceQrIfNeeded();
       await _maybePromptRatingAfterShiftComplete();
     } catch (e) {
       if (!mounted) return;
@@ -309,6 +320,28 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
     );
   }
 
+  Future<void> _openRateBusiness({
+    required RatingsRepository ratings,
+    required Gig gig,
+    required String workerId,
+  }) async {
+    final ok = await Navigator.of(context).push<bool>(
+      MaterialPageRoute<bool>(
+        builder: (_) => RateUserScreen(
+          ratings: ratings,
+          gigId: gig.id,
+          raterUserId: workerId,
+          ratedUserId: gig.businessId,
+          title: 'Rate the business for "${gig.title}"',
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (ok == true) {
+      setState(() => _ratingRefreshTick++);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final gig = _gig;
@@ -349,13 +382,14 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
         selDay != null &&
         checkIn != null &&
         checkOut == null;
-    final showAttendanceQr =
+    final showAttendanceScan =
         gig != null && !_isAwaitingHire && (canCheckIn || canCheckOut);
-    final qrIsCheckOut = canCheckOut;
     final spanDays = gig == null ? const <DateTime>[] : _gigCalendarDays(gig);
     final multiDay = spanDays.length > 1;
     final dayCtx =
         multiDay && selDay != null ? _shortDateLabel(selDay) : null;
+    final workerId = appActorId(widget.session, mockFallback: '');
+    final ratings = MarketplaceScope.of(context).ratings;
 
     final body = SafeArea(
       child: ShellChromeBackground(
@@ -486,7 +520,6 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
                         labelFor: _shortDateLabel,
                         onSelect: (d) {
                           setState(() => _selectedWorkDayLocal = d);
-                          _regenAttendanceQrIfNeeded();
                         },
                       ),
                     ),
@@ -497,22 +530,28 @@ class _WorkerShiftScreenState extends State<WorkerShiftScreen> {
                     shortLabel: _shortDateLabel,
                   ),
                   const SizedBox(height: 12),
-                  if (showAttendanceQr && _attendanceQrPayload.isNotEmpty) ...[
-                    _WorkerAttendanceQrCard(
-                      title: qrIsCheckOut
-                          ? 'Check-out — show employer'
-                          : 'Check-in — show employer',
-                      subtitle: qrIsCheckOut
-                          ? (multiDay
-                              ? 'Employer scans to clock you out for ${_shortDateLabel(selDay)}.'
-                              : 'Your employer scans this to end this workday.')
-                          : (multiDay
-                              ? 'Employer scans to clock you in for ${_shortDateLabel(selDay)}.'
-                              : 'Your employer scans this to start this workday.'),
-                      payload: _attendanceQrPayload,
-                      onRefresh: () {
-                        setState(_regenAttendanceQrIfNeeded);
-                      },
+                  if (allDone && workerId.isNotEmpty) ...[
+                    _RatingListingCard(
+                      key: ValueKey('rate_${gig.id}_$_ratingRefreshTick'),
+                      future: ratings.getForShift(
+                        gigId: gig.id,
+                        raterUserId: workerId,
+                        ratedUserId: gig.businessId,
+                      ),
+                      onRate: () => _openRateBusiness(
+                        ratings: ratings,
+                        gig: gig,
+                        workerId: workerId,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  if (showAttendanceScan && workerId.isNotEmpty) ...[
+                    _ScanEmployerQrCard(
+                      isCheckOut: canCheckOut,
+                      multiDay: multiDay,
+                      dayLabel: _shortDateLabel(selDay),
+                      onScan: () => _openScan(gig: gig, workerId: workerId),
                     ),
                     const SizedBox(height: 12),
                     _SecurityNote(),
@@ -817,21 +856,30 @@ class _LocationCard extends StatelessWidget {
   }
 }
 
-class _WorkerAttendanceQrCard extends StatelessWidget {
-  const _WorkerAttendanceQrCard({
-    required this.title,
-    required this.subtitle,
-    required this.payload,
-    required this.onRefresh,
+class _ScanEmployerQrCard extends StatelessWidget {
+  const _ScanEmployerQrCard({
+    required this.isCheckOut,
+    required this.multiDay,
+    required this.dayLabel,
+    required this.onScan,
   });
 
-  final String title;
-  final String subtitle;
-  final String payload;
-  final VoidCallback onRefresh;
+  final bool isCheckOut;
+  final bool multiDay;
+  final String? dayLabel;
+  final VoidCallback onScan;
 
   @override
   Widget build(BuildContext context) {
+    final title = isCheckOut ? 'Check-out — scan employer' : 'Check-in — scan employer';
+    final subtitle = isCheckOut
+        ? (multiDay && dayLabel != null
+            ? 'Scan the employer QR to clock out for $dayLabel.'
+            : 'Scan the employer QR to end this workday.')
+        : (multiDay && dayLabel != null
+            ? 'Scan the employer QR to clock in for $dayLabel.'
+            : 'Scan the employer QR to start this workday.');
+
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -848,45 +896,61 @@ class _WorkerAttendanceQrCard extends StatelessWidget {
           ),
         ],
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      child: Row(
         children: [
-          Text(
-            title,
-            style: GoogleFonts.inter(
-              fontSize: 16,
-              fontWeight: FontWeight.w900,
-              color: const Color(0xFF111827),
-            ),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            subtitle,
-            style: GoogleFonts.inter(
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              color: AgapColors.textMuted,
-              height: 1.35,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Center(
-            child: QrImageView(
-              data: payload,
-              size: 220,
-              backgroundColor: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 12),
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              onPressed: onRefresh,
-              icon: const Icon(Icons.refresh_rounded, size: 20),
-              label: Text(
-                'New code',
-                style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: const Color(0xFFEFF6FF),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: const Color(0xFF2563EB).withValues(alpha: 0.18),
               ),
+            ),
+            child: const Icon(
+              Icons.qr_code_scanner_rounded,
+              color: Color(0xFF2563EB),
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.inter(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    color: const Color(0xFF111827),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  subtitle,
+                  style: GoogleFonts.inter(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    color: AgapColors.textMuted,
+                    height: 1.35,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          FilledButton(
+            onPressed: onScan,
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF2563EB),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+            ),
+            child: Text(
+              'Scan',
+              style: GoogleFonts.inter(fontWeight: FontWeight.w800),
             ),
           ),
         ],
@@ -945,7 +1009,7 @@ class _SecurityNote extends StatelessWidget {
           Expanded(
             child: Text(
               'Each workday needs its own check-in and check-out scan. Pick the day above, '
-              'then show this code. Refresh if it expires.',
+              'then scan the employer QR.',
               style: GoogleFonts.inter(
                 fontSize: 12.5,
                 height: 1.35,
@@ -1116,6 +1180,169 @@ class _DailyAttendanceSection extends StatelessWidget {
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+class _RatingListingCard extends StatelessWidget {
+  const _RatingListingCard({
+    super.key,
+    required this.future,
+    required this.onRate,
+  });
+
+  final Future<Rating?> future;
+  final VoidCallback onRate;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: AgapColors.borderSubtle.withValues(alpha: 0.95),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 20,
+            offset: const Offset(0, 10),
+          ),
+        ],
+      ),
+      child: FutureBuilder<Rating?>(
+        future: future,
+        builder: (context, snap) {
+          if (snap.connectionState == ConnectionState.waiting) {
+            return Row(
+              children: [
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  'Loading rating…',
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w700,
+                    color: AgapColors.textMuted,
+                  ),
+                ),
+              ],
+            );
+          }
+          final r = snap.data;
+          if (r == null) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFFBEB),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFFDE68A)),
+                      ),
+                      child: const Icon(
+                        Icons.star_rounded,
+                        color: Color(0xFFF59E0B),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Rate this listing',
+                            style: GoogleFonts.inter(
+                              fontWeight: FontWeight.w900,
+                              color: const Color(0xFF0F172A),
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Your shift is completed. Please rate the business.',
+                            style: GoogleFonts.inter(
+                              fontWeight: FontWeight.w700,
+                              color: AgapColors.textMuted,
+                              height: 1.35,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: onRate,
+                    style: FilledButton.styleFrom(
+                      backgroundColor: const Color(0xFF2563EB),
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 13),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(14),
+                      ),
+                    ),
+                    icon: const Icon(Icons.rate_review_rounded),
+                    label: Text(
+                      'Rate business',
+                      style: GoogleFonts.inter(fontWeight: FontWeight.w900),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.star_rounded, color: Color(0xFFF59E0B)),
+                  const SizedBox(width: 6),
+                  Text(
+                    '${r.stars}/5',
+                    style: GoogleFonts.inter(
+                      fontWeight: FontWeight.w900,
+                      color: const Color(0xFF0F172A),
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    'Your rating',
+                    style: GoogleFonts.inter(
+                      fontWeight: FontWeight.w800,
+                      color: AgapColors.textMuted,
+                    ),
+                  ),
+                ],
+              ),
+              if ((r.feedback ?? '').trim().isNotEmpty) ...[
+                const SizedBox(height: 10),
+                Text(
+                  r.feedback!.trim(),
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w600,
+                    height: 1.45,
+                    color: const Color(0xFF0F172A),
+                  ),
+                ),
+              ],
+            ],
+          );
+        },
       ),
     );
   }

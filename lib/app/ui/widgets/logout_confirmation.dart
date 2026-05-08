@@ -12,7 +12,11 @@ Future<bool> confirmLogout(BuildContext context) async {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       title: Text(
         'Log out?',
-        style: GoogleFonts.inter(fontWeight: FontWeight.w800, fontSize: 18),
+        style: GoogleFonts.inter(
+          fontWeight: FontWeight.w800,
+          fontSize: 18,
+          color: const Color(0xFF0F172A),
+        ),
       ),
       content: Text(
         'You will need to sign in again to use AgapShift.',

@@ -6,14 +6,15 @@ import '../../../../domain/models.dart';
 import '../../../notifications/notification_repository.dart';
 import '../../../marketplace/marketplace_repository.dart';
 import '../../../profile/worker_display_names.dart';
-import '../../../ratings/mock_ratings_repository.dart';
+import '../../../ratings/ratings_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../../shift/shift_repository.dart';
 import '../../theme/agap_colors.dart';
 import '../../widgets/shell_screen_polish.dart';
 import '../../widgets/success_feedback.dart';
-import '../shift/employer_shift_scan_screen.dart';
+import '../shift/employer_attendance_qr_screen.dart';
+import '../profile/business_view_worker_profile_screen.dart';
 
 class BusinessGigApplicantsScreen extends StatefulWidget {
   const BusinessGigApplicantsScreen({
@@ -22,7 +23,7 @@ class BusinessGigApplicantsScreen extends StatefulWidget {
     required this.notifications,
     required this.session,
     required this.gig,
-    this.ratings,
+    required this.ratings,
     this.shiftRepo,
   });
 
@@ -30,7 +31,7 @@ class BusinessGigApplicantsScreen extends StatefulWidget {
   final NotificationRepository notifications;
   final SessionController session;
   final Gig gig;
-  final MockRatingsRepository? ratings;
+  final RatingsRepository ratings;
   final ShiftRepository? shiftRepo;
 
   @override
@@ -72,11 +73,8 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
       final ids = apps.map((a) => a.workerId).toSet();
       final names = await fetchWorkerDisplayNamesById(ids);
       final ratings = <String, double>{};
-      final r = widget.ratings;
-      if (r != null) {
-        for (final id in ids) {
-          ratings[id] = await r.averageForUser(id);
-        }
+      for (final id in ids) {
+        ratings[id] = await widget.ratings.averageForUser(id);
       }
 
       if (!mounted) return;
@@ -209,16 +207,15 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
                             ),
                             if (_showShiftQr)
                               IconButton(
-                                tooltip: 'Scan worker attendance QR',
+                                tooltip: 'Show attendance QR',
                                 onPressed: () {
                                   final r = widget.shiftRepo;
                                   if (r == null) return;
                                   Navigator.of(context).push<void>(
                                     MaterialPageRoute<void>(
-                                      builder: (_) => EmployerShiftScanScreen(
+                                      builder: (_) => EmployerAttendanceQrScreen(
                                         shiftRepo: r,
                                         gig: widget.gig,
-                                        session: widget.session,
                                       ),
                                     ),
                                   );
@@ -248,7 +245,7 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
               child: Transform.translate(
                 offset: const Offset(0, -10),
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
                   child: const _OffAppPayHiringNote(),
                 ),
               ),
@@ -330,6 +327,17 @@ class _BusinessGigApplicantsScreenState extends State<BusinessGigApplicantsScree
                       rating: rating,
                       showHire: canHire,
                       onHire: () => _hire(a),
+                      onOpenProfile: () {
+                        Navigator.of(context).push<void>(
+                          MaterialPageRoute<void>(
+                            builder: (_) => BusinessViewWorkerProfileScreen(
+                              workerId: a.workerId,
+                              ratings: widget.ratings,
+                              shiftRepo: widget.shiftRepo,
+                            ),
+                          ),
+                        );
+                      },
                     );
                   },
                 ),
@@ -425,6 +433,7 @@ class _ApplicantCard extends StatelessWidget {
     required this.rating,
     required this.showHire,
     required this.onHire,
+    required this.onOpenProfile,
   });
 
   final String initials;
@@ -435,6 +444,7 @@ class _ApplicantCard extends StatelessWidget {
   final double rating;
   final bool showHire;
   final VoidCallback onHire;
+  final VoidCallback onOpenProfile;
 
   Color get _statusAccent => switch (status) {
         ApplicationStatus.applied => const Color(0xFF2563EB),
@@ -447,21 +457,26 @@ class _ApplicantCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final dateStr =
         '${appliedAt.month}/${appliedAt.day}/${appliedAt.year.toString().substring(2)}';
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onOpenProfile,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AgapColors.borderSubtle),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
+        child: Ink(
+          padding: const EdgeInsets.all(14),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(14),
+            border: Border.all(color: AgapColors.borderSubtle),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: 0.04),
+                blurRadius: 10,
+                offset: const Offset(0, 3),
+              ),
+            ],
           ),
-        ],
-      ),
-      child: Row(
+          child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           CircleAvatar(
@@ -580,6 +595,8 @@ class _ApplicantCard extends StatelessWidget {
             ],
           ),
         ],
+          ),
+        ),
       ),
     );
   }

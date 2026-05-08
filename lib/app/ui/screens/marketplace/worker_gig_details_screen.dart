@@ -1,12 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../domain/business_identity.dart';
 import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
+import '../../../../domain/worker_identity.dart';
 import '../../../location/geo_distance.dart';
 import '../../../location/user_geo_point.dart';
+import '../onboarding/davao_del_sur_locations.dart';
 import '../../../marketplace/marketplace_repository.dart';
 import '../../../marketplace/marketplace_scope.dart';
 import '../../../notifications/notification_repository.dart';
@@ -14,6 +18,7 @@ import '../../../worker/worker_apply_guard.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../../supabase/supabase_config.dart';
+import '../../../profile/worker_display_names.dart';
 import '../../theme/agap_colors.dart';
 import '../../widgets/locked_action.dart';
 import '../../widgets/success_feedback.dart';
@@ -102,7 +107,8 @@ class _WorkerGigDetailsScreenState extends State<WorkerGigDetailsScreen> {
   Gig? _gig;
   GigApplication? _myApplication;
   String? _businessName;
-  double? _distanceKmFromUser;
+  /// Full sentence for the Location card (profile municipality preferred over GPS).
+  String? _locationDistanceLine;
   bool _loading = true;
   String? _error;
 
@@ -110,6 +116,20 @@ class _WorkerGigDetailsScreenState extends State<WorkerGigDetailsScreen> {
   void initState() {
     super.initState();
     _load();
+  }
+
+  Future<String?> _fetchWorkerMunicipality(String workerId) async {
+    if (!SupabaseConfig.isConfigured || workerId.isEmpty) return null;
+    try {
+      final row = await Supabase.instance.client
+          .from('profiles')
+          .select('identity_snapshot')
+          .eq('id', workerId)
+          .maybeSingle();
+      return workerMunicipalityFromIdentitySnapshot(row?['identity_snapshot']);
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<String?> _fetchBusinessName(String businessId) async {
@@ -135,21 +155,31 @@ class _WorkerGigDetailsScreenState extends State<WorkerGigDetailsScreen> {
     setState(() {
       _loading = true;
       _error = null;
-      _distanceKmFromUser = null;
+      _locationDistanceLine = null;
       _myApplication = null;
     });
     try {
       final gig = await widget.repo.getGig(widget.gigId);
       String? bizName;
-      double? distKm;
+      String? distanceLine;
       GigApplication? mine;
       if (gig != null) {
         bizName = await _fetchBusinessName(gig.businessId);
-        final userPt = await tryGetCurrentUserGeoPoint();
-        if (userPt != null) {
-          distKm = geoDistanceMetersApprox(userPt, gig.location) / 1000.0;
-        }
         final workerId = appActorId(widget.session, mockFallback: 'worker');
+        final muni = await _fetchWorkerMunicipality(workerId);
+        final homePt = DavaoDelSur.approxCenterForMunicipality(muni);
+        if (homePt != null && muni != null) {
+          final km = geoDistanceMeters(homePt, gig.location) / 1000.0;
+          distanceLine =
+              'About ${km.toStringAsFixed(1)} km from $muni (your profile area)';
+        } else {
+          final userPt = await tryGetCurrentUserGeoPoint();
+          if (userPt != null) {
+            final km = geoDistanceMeters(userPt, gig.location) / 1000.0;
+            distanceLine =
+                'About ${km.toStringAsFixed(1)} km from your current location';
+          }
+        }
         final apps = await widget.repo.listApplications();
         for (final a in apps) {
           if (a.gigId == widget.gigId && a.workerId == workerId) {
@@ -163,7 +193,7 @@ class _WorkerGigDetailsScreenState extends State<WorkerGigDetailsScreen> {
           _gig = gig;
           _myApplication = mine;
           _businessName = bizName;
-          _distanceKmFromUser = distKm;
+          _locationDistanceLine = distanceLine;
         });
       }
     } catch (e) {
@@ -191,6 +221,7 @@ class _WorkerGigDetailsScreenState extends State<WorkerGigDetailsScreen> {
     final block = await WorkerApplyGuard.blockingReason(
       shiftRepo: shift,
       session: widget.session,
+      applyingToGigId: widget.gigId,
     );
     if (!mounted) return;
     if (block != null) {
@@ -232,10 +263,15 @@ class _WorkerGigDetailsScreenState extends State<WorkerGigDetailsScreen> {
       );
       final gig = await widget.repo.getGig(widget.gigId);
       if (gig != null) {
+        final resolved =
+            (await fetchWorkerDisplayNamesById({workerId}))[workerId]?.trim();
+        final workerName = (resolved != null && resolved.isNotEmpty)
+            ? resolved
+            : applicantDisplayNameFallback(workerId);
         await widget.notifications.add(
           userId: gig.businessId,
           title: 'New applicant',
-          body: '$workerId applied to: ${gig.title}',
+          body: '$workerName applied to: ${gig.title}',
           data: {'gigId': gig.id},
         );
         await widget.notifications.add(
@@ -461,7 +497,7 @@ class _WorkerGigDetailsScreenState extends State<WorkerGigDetailsScreen> {
                       address: gig.addressLabel,
                       lat: gig.location.lat,
                       lng: gig.location.lng,
-                      distanceKmFromUser: _distanceKmFromUser,
+                      distanceLine: _locationDistanceLine,
                     ),
                     const SizedBox(height: 16),
                     if (parsed.about.isNotEmpty)
@@ -921,13 +957,13 @@ class _LocationCard extends StatelessWidget {
     required this.address,
     required this.lat,
     required this.lng,
-    this.distanceKmFromUser,
+    this.distanceLine,
   });
 
   final String address;
   final double lat;
   final double lng;
-  final double? distanceKmFromUser;
+  final String? distanceLine;
 
   @override
   Widget build(BuildContext context) {
@@ -972,7 +1008,7 @@ class _LocationCard extends StatelessWidget {
               height: 1.4,
             ),
           ),
-          if (distanceKmFromUser != null) ...[
+          if (distanceLine != null) ...[
             const SizedBox(height: 10),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -985,7 +1021,7 @@ class _LocationCard extends StatelessWidget {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    'About ${distanceKmFromUser!.toStringAsFixed(1)} km from your location',
+                    distanceLine!,
                     style: GoogleFonts.inter(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
@@ -1015,36 +1051,79 @@ class _LocationCard extends StatelessWidget {
           const SizedBox(height: 14),
           ClipRRect(
             borderRadius: BorderRadius.circular(12),
-            child: Container(
-              height: 140,
+            child: SizedBox(
+              height: 168,
               width: double.infinity,
-              decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    _purple.withValues(alpha: 0.15),
-                    _pageBg,
-                  ],
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                ),
-              ),
               child: Stack(
-                alignment: Alignment.center,
+                fit: StackFit.expand,
                 children: [
-                  Icon(Icons.map_rounded, size: 48, color: _purple.withValues(alpha: 0.35)),
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
-                        BoxShadow(
-                          color: Color(0x33000000),
-                          blurRadius: 8,
-                        ),
-                      ],
+                  FlutterMap(
+                    options: MapOptions(
+                      initialCenter: LatLng(lat, lng),
+                      initialZoom: 15.5,
+                      interactionOptions: const InteractionOptions(
+                        flags: InteractiveFlag.none,
+                      ),
                     ),
-                    child: Icon(Icons.location_pin, color: _purple, size: 32),
+                    children: [
+                      TileLayer(
+                        urlTemplate:
+                            'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        userAgentPackageName: 'dev.agapshift.nexora',
+                      ),
+                      MarkerLayer(
+                        markers: [
+                          Marker(
+                            point: LatLng(lat, lng),
+                            width: 44,
+                            height: 44,
+                            alignment: Alignment.bottomCenter,
+                            child: Icon(
+                              Icons.location_on_rounded,
+                              color: _purple,
+                              size: 44,
+                              shadows: const [
+                                Shadow(
+                                  color: Color(0x59000000),
+                                  blurRadius: 6,
+                                  offset: Offset(0, 2),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                  Positioned(
+                    left: 6,
+                    bottom: 6,
+                    child: DecoratedBox(
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.92),
+                        borderRadius: BorderRadius.circular(6),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withValues(alpha: 0.06),
+                            blurRadius: 4,
+                          ),
+                        ],
+                      ),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 3,
+                        ),
+                        child: Text(
+                          '© OpenStreetMap',
+                          style: GoogleFonts.inter(
+                            fontSize: 9,
+                            fontWeight: FontWeight.w600,
+                            color: AgapColors.textMuted,
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),
@@ -1071,7 +1150,8 @@ class _ApplyBottomBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bottom = MediaQuery.paddingOf(context).bottom;
+    final mq = MediaQuery.paddingOf(context);
+    final bottom = mq.bottom;
     final gigOpen = gigStatus == GigStatus.open;
     final app = myApplication;
 
@@ -1162,7 +1242,7 @@ class _ApplyBottomBar extends StatelessWidget {
       shadowColor: Colors.black26,
       color: Colors.white,
       child: Padding(
-        padding: EdgeInsets.fromLTRB(16, 12, 16, 12 + bottom),
+        padding: EdgeInsets.fromLTRB(16, 12, 6 + mq.right, 12 + bottom),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
@@ -1192,11 +1272,8 @@ class _ApplyBottomBar extends StatelessWidget {
                 ],
               ),
             ),
-            const SizedBox(width: 12),
-            Flexible(
-              fit: FlexFit.loose,
-              child: action,
-            ),
+            const SizedBox(width: 8),
+            action,
           ],
         ),
       ),

@@ -3,6 +3,7 @@ import 'package:google_fonts/google_fonts.dart';
 
 import '../../../domain/enums.dart';
 import '../../session/session_controller.dart';
+import '../../subscriptions/revenue_stub_service.dart';
 import '../screens/status/verification_status_screen.dart';
 import '../theme/agap_colors.dart';
 
@@ -194,6 +195,7 @@ Future<void> showVerifiedCongratsDialog(
   if (await session.hasShownVerifiedCongrats()) return;
   await session.markVerifiedCongratsShown();
   if (!context.mounted) return;
+  final role = session.state.role;
 
   await showDialog<void>(
     context: context,
@@ -277,20 +279,40 @@ Future<void> showVerifiedCongratsDialog(
               ),
             ),
             const SizedBox(height: 8),
-            _VerifiedPrivilegeRow(
-              icon: Icons.work_outline_rounded,
-              text: 'Apply for jobs and get hired faster with a verified badge.',
-            ),
-            const SizedBox(height: 8),
-            _VerifiedPrivilegeRow(
-              icon: Icons.qr_code_2_rounded,
-              text: 'Clock in/out with QR attendance tracking (visible to you and employers).',
-            ),
-            const SizedBox(height: 8),
-            _VerifiedPrivilegeRow(
-              icon: Icons.workspace_premium_outlined,
-              text: 'Access subscription options for multiple or continuous shifts.',
-            ),
+            if (role == UserRole.business) ...[
+              _VerifiedPrivilegeRow(
+                icon: Icons.verified_rounded,
+                text: 'Show a verified business badge to build trust with workers.',
+              ),
+              const SizedBox(height: 8),
+              _VerifiedPrivilegeRow(
+                icon: Icons.workspace_premium_outlined,
+                text:
+                    'Unlock employer subscription (₱${RevenueStubService.employerSubscriptionPhp}/mo) for unlimited job posts and hires.',
+              ),
+              const SizedBox(height: 8),
+              _VerifiedPrivilegeRow(
+                icon: Icons.trending_up_rounded,
+                text:
+                    'Boost job posts (₱${RevenueStubService.postBoostPhp}) for ${RevenueStubService.postBoostValidity.inDays} days top placement in worker feeds.',
+              ),
+            ] else ...[
+              _VerifiedPrivilegeRow(
+                icon: Icons.work_outline_rounded,
+                text: 'Apply for jobs and get hired faster with a verified badge.',
+              ),
+              const SizedBox(height: 8),
+              _VerifiedPrivilegeRow(
+                icon: Icons.qr_code_2_rounded,
+                text: 'Clock in/out with QR attendance tracking (visible to you and employers).',
+              ),
+              const SizedBox(height: 8),
+              _VerifiedPrivilegeRow(
+                icon: Icons.workspace_premium_outlined,
+                text:
+                    'Unlock worker subscription (₱${RevenueStubService.workerSubscriptionPhp}/mo) for unlimited applications and multiple shifts.',
+              ),
+            ],
             const SizedBox(height: 14),
             SizedBox(
               width: double.infinity,

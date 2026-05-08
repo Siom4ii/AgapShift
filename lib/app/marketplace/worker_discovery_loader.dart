@@ -9,7 +9,7 @@ import '../location/davao_del_sur_scope.dart';
 import '../location/geo_distance.dart';
 import '../location/user_geo_point.dart';
 import '../profile/worker_display_names.dart';
-import '../ratings/mock_ratings_repository.dart';
+import '../ratings/ratings_repository.dart';
 import '../session/app_actor_id.dart';
 import '../session/session_controller.dart';
 import '../shift/shift_repository.dart';
@@ -66,7 +66,7 @@ int? _ageYearsFromBirthDate(DateTime? bd) {
 Future<List<DiscoverableWorker>> loadDiscoverableWorkers({
   required MarketplaceRepository repo,
   required SessionController session,
-  required MockRatingsRepository ratings,
+  required RatingsRepository ratings,
   required ShiftRepository shiftRepo,
 }) async {
   final businessId = appActorId(session, mockFallback: '');
@@ -401,7 +401,7 @@ double _distanceKmForWorker(String workerId, GeoPoint ref) {
   final latOff = (h % 1000) / 48000.0;
   final lngOff = ((h ~/ 1000) % 1000) / 48000.0;
   final p = GeoPoint(lat: ref.lat + latOff, lng: ref.lng + lngOff);
-  return geoDistanceMetersApprox(ref, p) / 1000.0;
+  return geoDistanceMeters(ref, p) / 1000.0;
 }
 
 List<String> _fallbackSkills(String id) {

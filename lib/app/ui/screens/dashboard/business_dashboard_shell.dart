@@ -6,12 +6,12 @@ import '../../../payments/payments_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../../shift/shift_repository.dart';
-import '../../../ratings/mock_ratings_repository.dart';
+import '../../../ratings/ratings_repository.dart';
+import '../../../marketplace/marketplace_scope.dart';
 import '../marketplace/business_create_gig_screen.dart';
 import '../messages/messages_inbox_screen.dart';
 import '../notifications/notifications_screen.dart';
 import '../profile/business_profile_screen.dart';
-import '../wallet/business_wallet_screen.dart';
 import '../../theme/agap_colors.dart';
 import '../../widgets/business_shell_bottom_nav.dart';
 import '../../widgets/success_feedback.dart';
@@ -20,6 +20,7 @@ import '../../widgets/shell_tab_transition.dart';
 import '../../widgets/verification_banner.dart';
 import 'business_find_workers_screen.dart';
 import 'business_home_screen.dart';
+import '../marketplace/business_gigs_screen.dart';
 
 class BusinessDashboardShell extends StatefulWidget {
   const BusinessDashboardShell({
@@ -38,7 +39,7 @@ class BusinessDashboardShell extends StatefulWidget {
   final NotificationRepository notifications;
   final PaymentsRepository payments;
   final ShiftRepository shift;
-  final MockRatingsRepository ratings;
+  final RatingsRepository ratings;
   final SessionController session;
 
   @override
@@ -46,10 +47,11 @@ class BusinessDashboardShell extends StatefulWidget {
 }
 
 class _BusinessDashboardShellState extends State<BusinessDashboardShell> {
-  /// 0 Home, 1 Workers, 2 Wallet, 3 Profile
+  /// 0 Home, 1 Listings, 2 Workers, 3 Profile
   int _contentIndex = 0;
   bool _verificationPopupShown = false;
   int _notifUnread = 0;
+  int _inboxUnread = 0;
 
   @override
   void initState() {
@@ -66,6 +68,7 @@ class _BusinessDashboardShellState extends State<BusinessDashboardShell> {
       }
       if (mounted) {
         await _syncNotificationBadge();
+        await _syncInboxBadge();
       }
     });
   }
@@ -91,6 +94,16 @@ class _BusinessDashboardShellState extends State<BusinessDashboardShell> {
     }
   }
 
+  Future<void> _syncInboxBadge() async {
+    try {
+      final scope = MarketplaceScope.tryOf(context);
+      final n = await scope?.messaging.unreadCount();
+      if (mounted) setState(() => _inboxUnread = n ?? 0);
+    } catch (_) {
+      if (mounted) setState(() => _inboxUnread = 0);
+    }
+  }
+
   Future<void> _openNotifications() async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
@@ -111,6 +124,9 @@ class _BusinessDashboardShellState extends State<BusinessDashboardShell> {
         builder: (_) => const MessagesInboxScreen(),
       ),
     );
+    if (mounted) {
+      await _syncInboxBadge();
+    }
   }
 
   Future<void> _openPostJob() async {
@@ -150,12 +166,21 @@ class _BusinessDashboardShellState extends State<BusinessDashboardShell> {
         ratings: widget.ratings,
         onPostJob: _openPostJob,
         onFindWorkers: () => setState(() => _contentIndex = 1),
-        onOpenWallet: () => setState(() => _contentIndex = 2),
         onOpenNotifications: _openNotifications,
         onOpenInbox: _openInbox,
         notificationUnreadCount: _notifUnread,
+        inboxUnreadCount: _inboxUnread,
       ),
-      1 => BusinessFindWorkersScreen(
+      1 => BusinessGigsScreen(
+        repo: widget.repo,
+        notifications: widget.notifications,
+        payments: widget.payments,
+        ratings: widget.ratings,
+        session: widget.session,
+        shiftRepo: widget.shift,
+        embedded: true,
+      ),
+      2 => BusinessFindWorkersScreen(
         repo: widget.repo,
         session: widget.session,
         ratings: widget.ratings,
@@ -165,11 +190,7 @@ class _BusinessDashboardShellState extends State<BusinessDashboardShell> {
         onOpenNotifications: _openNotifications,
         onOpenInbox: _openInbox,
         notificationUnreadCount: _notifUnread,
-      ),
-      2 => BusinessWalletScreen(
-        onOpenNotifications: _openNotifications,
-        onOpenInbox: _openInbox,
-        notificationUnreadCount: _notifUnread,
+        inboxUnreadCount: _inboxUnread,
       ),
       _ => BusinessProfileScreen(
         session: widget.session,
@@ -182,6 +203,7 @@ class _BusinessDashboardShellState extends State<BusinessDashboardShell> {
         onOpenNotifications: _openNotifications,
         onOpenInbox: _openInbox,
         notificationUnreadCount: _notifUnread,
+        inboxUnreadCount: _inboxUnread,
       ),
     };
 
