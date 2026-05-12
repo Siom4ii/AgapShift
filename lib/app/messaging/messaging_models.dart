@@ -7,6 +7,8 @@ class DmConversationSummary {
     required this.otherDisplayName,
     required this.lastPreview,
     required this.updatedAt,
+    this.lastMessageSenderId,
+    this.unreadCount = 0,
   });
 
   final String conversationId;
@@ -14,6 +16,12 @@ class DmConversationSummary {
   final String otherDisplayName;
   final String lastPreview;
   final DateTime updatedAt;
+
+  /// [sender_id] of the latest row in `dm_messages`, when known.
+  final String? lastMessageSenderId;
+
+  /// Messages from the peer still unread by the current user (best-effort).
+  final int unreadCount;
 }
 
 class DmMessage {

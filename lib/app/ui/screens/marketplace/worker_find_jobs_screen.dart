@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../../domain/business_identity.dart';
+import '../../../../domain/enums.dart';
 import '../../../../domain/models.dart';
 import '../../../marketplace/marketplace_repository.dart';
 import '../../../notifications/notification_repository.dart';
@@ -62,7 +64,10 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
   List<Gig> _items = const [];
   int _unread = 0;
   Map<String, String> _businessNames = const {};
+  Map<String, bool> _businessVerified = const {};
   Set<String> _appliedGigIds = const {};
+  final Set<String> _savedGigIds = <String>{};
+  bool _usedDeviceGpsForSearch = false;
 
   GeoPoint _searchCenter = DavaoDelSurScope.defaultCenter;
   String _locationSubtitle = DavaoDelSurScope.fallbackLocationLabel;
@@ -97,6 +102,7 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
       setState(() {
         _searchCenter = g;
         _mapCenter = LatLng(g.lat, g.lng);
+        _usedDeviceGpsForSearch = true;
         _locationSubtitle = 'Near your location · ${DavaoDelSurScope.regionLabel}';
       });
       SchedulerBinding.instance.addPostFrameCallback((_) {
@@ -111,6 +117,7 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
           DavaoDelSurScope.defaultCenter.lat,
           DavaoDelSurScope.defaultCenter.lng,
         );
+        _usedDeviceGpsForSearch = false;
         _locationSubtitle = DavaoDelSurScope.outsideRegionListLabel;
       });
       SchedulerBinding.instance.addPostFrameCallback((_) {
@@ -124,6 +131,7 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
         DavaoDelSurScope.defaultCenter.lat,
         DavaoDelSurScope.defaultCenter.lng,
       );
+      _usedDeviceGpsForSearch = false;
       _locationSubtitle = DavaoDelSurScope.fallbackLocationLabel;
     });
     SchedulerBinding.instance.addPostFrameCallback((_) {
@@ -199,6 +207,7 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
       setState(() {
         _searchCenter = gp;
         _mapCenter = LatLng(pos.latitude, pos.longitude);
+        _usedDeviceGpsForSearch = true;
         _locationSubtitle = 'Near your location · ${DavaoDelSurScope.regionLabel}';
       });
       SchedulerBinding.instance.addPostFrameCallback((_) {
@@ -309,14 +318,18 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
     ];
   }
 
-  Future<Map<String, String>> _fetchBusinessNames(Iterable<String> ids) async {
+  Future<({Map<String, String> names, Map<String, bool> verified})>
+      _fetchBusinessProfiles(Iterable<String> ids) async {
     final unique = ids.toSet().where((e) => e.isNotEmpty).toList();
-    final out = <String, String>{for (final id in unique) id: 'Business'};
-    if (!SupabaseConfig.isConfigured || unique.isEmpty) return out;
+    final names = <String, String>{for (final id in unique) id: 'Business'};
+    final verified = <String, bool>{for (final id in unique) id: false};
+    if (!SupabaseConfig.isConfigured || unique.isEmpty) {
+      return (names: names, verified: verified);
+    }
     try {
       final rows = await Supabase.instance.client
           .from('profiles')
-          .select('id,identity_snapshot')
+          .select('id,identity_snapshot,account_status')
           .inFilter('id', unique);
       for (final raw in rows as List<dynamic>) {
         final m = Map<String, dynamic>.from(raw as Map);
@@ -326,11 +339,13 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
           m['identity_snapshot'],
         );
         if (biz != null && biz.displayName.trim().isNotEmpty) {
-          out[id] = biz.displayName.trim();
+          names[id] = biz.displayName.trim();
         }
+        verified[id] =
+            (m['account_status'] as String?) == AccountStatus.verified.name;
       }
     } catch (_) {}
-    return out;
+    return (names: names, verified: verified);
   }
 
   Future<void> _load({bool refreshUserPosition = false}) async {
@@ -362,7 +377,7 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
           .where((a) => a.workerId == uid)
           .map((a) => a.gigId)
           .toSet();
-      final names = await _fetchBusinessNames(items.map((g) => g.businessId));
+      final profiles = await _fetchBusinessProfiles(items.map((g) => g.businessId));
 
       final notifs = uid.isEmpty
           ? <AppNotification>[]
@@ -373,7 +388,8 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
         setState(() {
           _items = items;
           _appliedGigIds = applied;
-          _businessNames = names;
+          _businessNames = profiles.names;
+          _businessVerified = profiles.verified;
           _unread = unread;
         });
       }
@@ -487,26 +503,52 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
                   Positioned(
                     right: 10,
                     top: MediaQuery.paddingOf(context).top + 6,
-                    child: Column(
-                      children: [
-                        _FindJobsMapFab(
-                          icon: Icons.my_location_rounded,
-                          onPressed: _recenterOnMyLocation,
+                    child: ClipRRect(
+                      borderRadius: BorderRadius.circular(18),
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 14, sigmaY: 14),
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: Colors.white.withValues(alpha: 0.52),
+                            borderRadius: BorderRadius.circular(18),
+                            border: Border.all(
+                              color: Colors.white.withValues(alpha: 0.75),
+                            ),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.08),
+                                blurRadius: 16,
+                                offset: const Offset(0, 6),
+                              ),
+                            ],
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(6),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                _GlassMapIconButton(
+                                  icon: Icons.my_location_rounded,
+                                  onPressed: _recenterOnMyLocation,
+                                ),
+                                const SizedBox(height: 8),
+                                _GlassMapIconButton(
+                                  icon: Icons.tune_rounded,
+                                  onPressed: _showMapFiltersSheet,
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
-                        const SizedBox(height: 8),
-                        _FindJobsMapFab(
-                          icon: Icons.tune_rounded,
-                          onPressed: _showMapFiltersSheet,
-                        ),
-                      ],
+                      ),
                     ),
                   ),
                 ],
               ),
             ),
             DraggableScrollableSheet(
-              initialChildSize: 0.5,
-              minChildSize: 0.22,
+              initialChildSize: 0.63,
+              minChildSize: 0.26,
               maxChildSize: 0.94,
               builder: (context, scrollController) {
                 return Container(
@@ -620,11 +662,11 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
               _SearchField(controller: _search),
               const SizedBox(height: 14),
               SizedBox(
-                height: 44,
+                height: 46,
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   clipBehavior: Clip.none,
-                  padding: EdgeInsets.zero,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
                   itemBuilder: (context, i) {
                     final spec = _categories[i];
                     final selected = spec.key == _selectedCategoryKey;
@@ -645,37 +687,41 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
               Row(
                 children: [
                   Expanded(
-                    child: Text(
-                      _loading ? 'Loading jobs…' : '$count jobs found near you',
-                      maxLines: 1,
+                    child: Text.rich(
+                      TextSpan(
+                        style: GoogleFonts.inter(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                          color: AgapColors.textMuted,
+                        ),
+                        children: [
+                          TextSpan(
+                            text: _loading
+                                ? 'Loading jobs…'
+                                : '$count jobs found near you',
+                          ),
+                          if (!_loading && count > 0) ...[
+                            TextSpan(
+                              text: '  ·  ',
+                              style: GoogleFonts.inter(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                                color: const Color(0xFFCBD5E1),
+                              ),
+                            ),
+                            TextSpan(
+                              text: '$count matches',
+                              style: GoogleFonts.inter(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w800,
+                                color: _findJobsPurpleDeep,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      maxLines: 2,
                       overflow: TextOverflow.ellipsis,
-                      style: GoogleFonts.inter(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                        color: AgapColors.textMuted,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFF3E8FF),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: const Color(0xFFE9D5FF),
-                      ),
-                    ),
-                    child: Text(
-                      '$count matches',
-                      style: GoogleFonts.inter(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        color: _findJobsPurpleDeep,
-                      ),
                     ),
                   ),
                 ],
@@ -713,10 +759,23 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
                       gig: g,
                       businessName:
                           _businessNames[g.businessId] ?? 'Business',
+                      employerVerified:
+                          _businessVerified[g.businessId] ?? false,
                       applied: _appliedGigIds.contains(g.id),
+                      saved: _savedGigIds.contains(g.id),
+                      distanceUsesGps: _usedDeviceGpsForSearch,
                       distanceKm:
                           geoDistanceMeters(_searchCenter, g.location) /
                               1000.0,
+                      onBookmark: () {
+                        setState(() {
+                          if (_savedGigIds.contains(g.id)) {
+                            _savedGigIds.remove(g.id);
+                          } else {
+                            _savedGigIds.add(g.id);
+                          }
+                        });
+                      },
                       onTap: () async {
                         await Navigator.of(context).push<void>(
                           MaterialPageRoute<void>(
@@ -749,8 +808,11 @@ class _WorkerFindJobsScreenState extends State<WorkerFindJobsScreen> {
   }
 }
 
-class _FindJobsMapFab extends StatelessWidget {
-  const _FindJobsMapFab({required this.icon, required this.onPressed});
+class _GlassMapIconButton extends StatelessWidget {
+  const _GlassMapIconButton({
+    required this.icon,
+    required this.onPressed,
+  });
 
   final IconData icon;
   final VoidCallback onPressed;
@@ -758,17 +820,16 @@ class _FindJobsMapFab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      elevation: 3,
-      shadowColor: Colors.black26,
+      color: Colors.white.withValues(alpha: 0.45),
       shape: const CircleBorder(),
-      color: Colors.white,
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         customBorder: const CircleBorder(),
         onTap: onPressed,
         child: SizedBox(
-          width: 46,
-          height: 46,
-          child: Icon(icon, color: AgapColors.primary, size: 22),
+          width: 44,
+          height: 44,
+          child: Icon(icon, color: const Color(0xFF1E3A5F), size: 22),
         ),
       ),
     );
@@ -907,23 +968,54 @@ class _NotifButton extends StatelessWidget {
   }
 }
 
-class _SearchField extends StatelessWidget {
+class _SearchField extends StatefulWidget {
   const _SearchField({required this.controller});
 
   final TextEditingController controller;
 
   @override
+  State<_SearchField> createState() => _SearchFieldState();
+}
+
+class _SearchFieldState extends State<_SearchField> {
+  late final FocusNode _focus = FocusNode();
+
+  void _onControllerChanged() => setState(() {});
+
+  @override
+  void initState() {
+    super.initState();
+    _focus.addListener(() => setState(() {}));
+    widget.controller.addListener(_onControllerChanged);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onControllerChanged);
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Container(
+    final focused = _focus.hasFocus;
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
       height: 48,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE5E7EB)),
+        border: Border.all(
+          color: focused ? _findJobsPurple : const Color(0xFFE5E7EB),
+          width: focused ? 2 : 1,
+        ),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.04),
-            blurRadius: 12,
+            color: focused
+                ? _findJobsPurple.withValues(alpha: 0.22)
+                : Colors.black.withValues(alpha: 0.04),
+            blurRadius: focused ? 18 : 12,
             offset: const Offset(0, 4),
           ),
         ],
@@ -931,11 +1023,15 @@ class _SearchField extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 14),
       child: Row(
         children: [
-          Icon(Icons.search_rounded, color: AgapColors.textMuted),
+          Icon(
+            Icons.search_rounded,
+            color: focused ? _findJobsPurple : AgapColors.textMuted,
+          ),
           const SizedBox(width: 10),
           Expanded(
             child: TextField(
-              controller: controller,
+              focusNode: _focus,
+              controller: widget.controller,
               decoration: InputDecoration(
                 isDense: true,
                 filled: true,
@@ -955,10 +1051,10 @@ class _SearchField extends StatelessWidget {
               ),
             ),
           ),
-          if (controller.text.trim().isNotEmpty)
+          if (widget.controller.text.trim().isNotEmpty)
             IconButton(
               tooltip: 'Clear',
-              onPressed: () => controller.clear(),
+              onPressed: () => widget.controller.clear(),
               icon: const Icon(Icons.close_rounded, size: 18),
             ),
         ],
@@ -980,11 +1076,14 @@ class _Chip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final bg = selected ? _findJobsPurpleDeep : const Color(0xFFF3F4F6);
+    final bg = selected ? _findJobsPurpleDeep : const Color(0xFFF9FAFB);
     final fg = selected ? Colors.white : const Color(0xFF374151);
-    final borderColor = selected ? _findJobsPurpleDeep : const Color(0xFFE5E7EB);
-    // Material supplies a solid fill; app InputDecorationTheme was confusing Ink.
+    final borderColor = selected ? _findJobsPurpleDeep : const Color(0xFFE8ECF1);
     return Material(
+      elevation: selected ? 3 : 0,
+      shadowColor: selected
+          ? _findJobsPurpleDeep.withValues(alpha: 0.35)
+          : Colors.transparent,
       color: bg,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(999),
@@ -997,7 +1096,7 @@ class _Chip extends StatelessWidget {
         splashColor: Colors.white.withValues(alpha: selected ? 0.22 : 0.12),
         highlightColor: Colors.white.withValues(alpha: selected ? 0.12 : 0.06),
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 11),
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 11),
           child: Text(
             label,
             style: GoogleFonts.inter(
@@ -1016,15 +1115,23 @@ class _JobCard extends StatelessWidget {
   const _JobCard({
     required this.gig,
     required this.businessName,
+    required this.employerVerified,
     required this.applied,
+    required this.saved,
+    required this.distanceUsesGps,
     required this.distanceKm,
+    required this.onBookmark,
     required this.onTap,
   });
 
   final Gig gig;
   final String businessName;
+  final bool employerVerified;
   final bool applied;
+  final bool saved;
+  final bool distanceUsesGps;
   final double distanceKm;
+  final VoidCallback onBookmark;
   final VoidCallback onTap;
 
   @override
@@ -1064,126 +1171,174 @@ class _JobCard extends StatelessWidget {
               ),
             ],
           ),
-          child: Padding(
-            padding: const EdgeInsets.all(16),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _LeadingIcon(category: gig.category),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            gig.title,
-                            style: GoogleFonts.inter(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                              color: const Color(0xFF111827),
-                              height: 1.2,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            businessName,
-                            style: GoogleFonts.inter(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: AgapColors.textMuted,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          pay.$1,
-                          style: GoogleFonts.inter(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w900,
-                            color: _findJobsPurple,
-                            height: 1.1,
+                        _LeadingIcon(category: gig.category),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                gig.title,
+                                style: GoogleFonts.inter(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w800,
+                                  color: const Color(0xFF111827),
+                                  height: 1.2,
+                                ),
+                              ),
+                              const SizedBox(height: 6),
+                              Text(
+                                businessName,
+                                style: GoogleFonts.inter(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: AgapColors.textMuted,
+                                ),
+                              ),
+                              if (employerVerified) ...[
+                                const SizedBox(height: 6),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.verified_rounded,
+                                      size: 15,
+                                      color: const Color(0xFF059669),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      'Verified employer',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w700,
+                                        color: const Color(0xFF047857),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
+                            ],
                           ),
                         ),
-                        Text(
-                          pay.$2,
-                          style: GoogleFonts.inter(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: AgapColors.textMuted,
+                        const SizedBox(width: 10),
+                        Padding(
+                          padding: const EdgeInsets.only(right: 28),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                pay.$1,
+                                style: GoogleFonts.inter(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w900,
+                                  color: _findJobsPurple,
+                                  height: 1.1,
+                                ),
+                              ),
+                              Text(
+                                pay.$2,
+                                style: GoogleFonts.inter(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w600,
+                                  color: AgapColors.textMuted,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                       ],
                     ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 14,
-                  runSpacing: 8,
-                  children: [
-                    _Meta(
-                      icon: Icons.place_outlined,
-                      text: '${distanceKm.toStringAsFixed(1)} km',
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 14,
+                      runSpacing: 8,
+                      children: [
+                        _Meta(
+                          icon: Icons.place_outlined,
+                          text:
+                              '${distanceKm.toStringAsFixed(1)} km · ${distanceUsesGps ? 'GPS' : 'approx'}',
+                        ),
+                        _Meta(icon: Icons.schedule_rounded, text: hoursLabel),
+                        _Meta(
+                          icon: Icons.event_available_rounded,
+                          text: '$dayLabel $time',
+                        ),
+                      ],
                     ),
-                    _Meta(icon: Icons.schedule_rounded, text: hoursLabel),
-                    _Meta(
-                      icon: Icons.event_available_rounded,
-                      text: '$dayLabel $time',
+                    const SizedBox(height: 12),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        if (gig.isBoostedActive)
+                          const _Pill(
+                            text: 'Boosted',
+                            bg: Color(0xFFEDE9FE),
+                            fg: Color(0xFF5B21B6),
+                            icon: Icons.rocket_launch_rounded,
+                          ),
+                        if (urgent)
+                          const _Pill(
+                            text: 'Urgent',
+                            bg: Color(0xFFFFE4E6),
+                            fg: Color(0xFFB91C1C),
+                            icon: Icons.local_fire_department_rounded,
+                          ),
+                        if (todayOnly && !urgent)
+                          const _Pill(
+                            text: 'Today only',
+                            bg: Color(0xFFFFEDD5),
+                            fg: Color(0xFF9A3412),
+                            icon: Icons.wb_sunny_outlined,
+                          ),
+                        if (slots != null && slots > 0)
+                          _Pill(
+                            text: '$slots ${slots == 1 ? 'slot' : 'slots'} left',
+                            bg: const Color(0xFFF3F4F6),
+                            fg: const Color(0xFF374151),
+                            icon: Icons.people_alt_rounded,
+                          ),
+                        if (applied)
+                          const _Pill(
+                            text: 'Applied',
+                            bg: Color(0xFFDCFCE7),
+                            fg: Color(0xFF166534),
+                            icon: Icons.check_circle_rounded,
+                          ),
+                      ],
                     ),
                   ],
                 ),
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: [
-                    if (gig.isBoostedActive)
-                      const _Pill(
-                        text: 'Boosted',
-                        bg: Color(0xFFEDE9FE),
-                        fg: Color(0xFF5B21B6),
-                        icon: Icons.rocket_launch_rounded,
-                      ),
-                    if (urgent)
-                      const _Pill(
-                        text: 'Urgent',
-                        bg: Color(0xFFFFE4E6),
-                        fg: Color(0xFFB91C1C),
-                        icon: Icons.local_fire_department_rounded,
-                      ),
-                    if (todayOnly && !urgent)
-                      const _Pill(
-                        text: 'Today only',
-                        bg: Color(0xFFFFEDD5),
-                        fg: Color(0xFF9A3412),
-                        icon: Icons.wb_sunny_outlined,
-                      ),
-                    if (slots != null && slots > 0)
-                      _Pill(
-                        text: '$slots ${slots == 1 ? 'slot' : 'slots'} left',
-                        bg: const Color(0xFFF3F4F6),
-                        fg: const Color(0xFF374151),
-                        icon: Icons.people_alt_rounded,
-                      ),
-                    if (applied)
-                      const _Pill(
-                        text: 'Applied',
-                        bg: Color(0xFFDCFCE7),
-                        fg: Color(0xFF166534),
-                        icon: Icons.check_circle_rounded,
-                      ),
-                  ],
+              ),
+              Positioned(
+                top: 4,
+                right: 4,
+                child: IconButton(
+                  visualDensity: VisualDensity.compact,
+                  tooltip: saved ? 'Remove bookmark' : 'Save job',
+                  onPressed: onBookmark,
+                  icon: Icon(
+                    saved
+                        ? Icons.bookmark_rounded
+                        : Icons.bookmark_add_outlined,
+                    color: saved
+                        ? _findJobsPurpleDeep
+                        : AgapColors.textMuted,
+                    size: 22,
+                  ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),

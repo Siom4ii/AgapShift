@@ -11,7 +11,7 @@ class ShellTabTransition extends StatelessWidget {
   final int tabIndex;
   final Widget child;
 
-  static const Duration _duration = Duration(milliseconds: 420);
+  static const Duration _duration = Duration(milliseconds: 300);
 
   @override
   Widget build(BuildContext context) {

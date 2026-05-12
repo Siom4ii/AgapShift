@@ -16,9 +16,11 @@ import '../../../ratings/ratings_repository.dart';
 import '../../../session/app_actor_id.dart';
 import '../../../session/session_controller.dart';
 import '../../../shift/shift_repository.dart';
+import '../../../shift/worker_hired_shift_display.dart';
 import '../../../supabase/supabase_config.dart';
 import '../../theme/agap_colors.dart';
 import '../notifications/notifications_screen.dart';
+import '../ratings/user_ratings_screen.dart';
 import 'worker_gig_details_screen.dart';
 
 /// Worker **Home**: dashboard (greeting, stats, active shift, quick actions,
@@ -58,6 +60,8 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
   int _completedShifts = 0;
   int _appliedJobs = 0;
   _ActiveShiftSnap? _active;
+  /// Latest employer feedback snippet for the home “Your Rating” card.
+  String? _latestRatingSnippet;
 
   GeoPoint _anchor = DavaoDelSurScope.defaultCenter;
 
@@ -115,6 +119,20 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
           .where((s) => s.workerId == workerId && s.checkOutAt != null)
           .length;
       final rating = workerId.isEmpty ? 0.0 : await widget.ratings.averageForUser(workerId);
+      String? ratingSnippet;
+      if (workerId.isNotEmpty) {
+        try {
+          final rows = await widget.ratings.listForUser(workerId);
+          if (rows.isNotEmpty) {
+            rows.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+            final f = rows.first.feedback?.trim();
+            if (f != null && f.isNotEmpty) {
+              ratingSnippet =
+                  f.length > 96 ? '${f.substring(0, 93)}…' : f;
+            }
+          }
+        } catch (_) {}
+      }
 
       final notifs = workerId.isEmpty
           ? <AppNotification>[]
@@ -136,7 +154,6 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
         workerId,
         apps,
         items,
-        sessions,
         names,
       );
 
@@ -149,6 +166,7 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
         _completedShifts = completed;
         _appliedJobs = applied;
         _active = active;
+        _latestRatingSnippet = ratingSnippet;
       });
     } catch (e) {
       if (mounted) setState(() => _error = '$e');
@@ -160,7 +178,6 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
     String workerId,
     List<GigApplication> apps,
     List<Gig> gigPool,
-    List<ShiftSession> sessions,
     Map<String, String> businessNames,
   ) async {
     if (workerId.isEmpty) return null;
@@ -171,22 +188,31 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
         .map((a) => a.gigId)
         .toSet();
     final byId = {for (final g in gigPool) g.id: g};
+    final hiredGigs = <Gig>[];
     for (final gid in hiredIds) {
       var g = byId[gid];
       g ??= await widget.repo.getGig(gid);
       if (g == null || g.status == GigStatus.cancelled) continue;
-      ShiftSession? mine;
-      for (final s in sessions) {
-        if (s.gigId == gid && s.workerId == workerId) {
-          mine = s;
-          break;
-        }
-      }
-      if (mine?.checkOutAt != null) continue;
-      final biz = _employerDisplayName(g, businessNames);
-      return _ActiveShiftSnap(gig: g, company: biz);
+      hiredGigs.add(g);
     }
-    return null;
+    hiredGigs.sort((a, b) => a.startAt.compareTo(b.startAt));
+    if (hiredGigs.isEmpty) return null;
+
+    final displayed = await pickDisplayedHiredShift(
+      hiredGigs: hiredGigs,
+      workerId: workerId,
+      shiftRepo: widget.shift,
+    );
+    if (displayed == null) return null;
+
+    final summaries = await widget.shift.listWorkDaySummaries(
+      gigId: displayed.id,
+      workerId: workerId,
+    );
+    if (shiftFullyCheckedOut(displayed, summaries)) return null;
+
+    final biz = _employerDisplayName(displayed, businessNames);
+    return _ActiveShiftSnap(gig: displayed, company: biz);
   }
 
   String _greeting() {
@@ -206,6 +232,15 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
     return n.split(RegExp(r'\s+')).first;
   }
 
+  /// Full display name for greeting headline (falls back to first name / email).
+  String _displayNameForHeader() {
+    final n = widget.session.state.workerIdentity?.displayName.trim();
+    if (n != null && n.isNotEmpty) return n;
+    final e = widget.session.state.email ?? '';
+    if (e.isEmpty) return _firstName();
+    return e.split('@').first;
+  }
+
   List<Gig> get _previewJobs {
     final open = _nearby.where((g) => g.status == GigStatus.open).toList();
     open.sort((a, b) {
@@ -219,7 +254,8 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
   @override
   Widget build(BuildContext context) {
     final bottom = MediaQuery.paddingOf(context).bottom;
-    final name = _firstName();
+    final name = _displayNameForHeader();
+    final workerId = appActorId(widget.session, mockFallback: '');
 
     return ColoredBox(
       color: const Color(0xFFF8F9FF),
@@ -232,7 +268,7 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
             SliverToBoxAdapter(
               child: _HomeHeader(
                 greeting: _greeting(),
-                name: name,
+                displayName: name,
                 unread: _unread,
                 completed: _completedShifts,
                 rating: _ratingAvg,
@@ -371,6 +407,20 @@ class _WorkerGigsScreenState extends State<WorkerGigsScreen> {
                 child: _RatingSummaryCard(
                   rating: _ratingAvg,
                   completed: _completedShifts,
+                  feedbackSnippet: _latestRatingSnippet,
+                  onViewAllRatings: workerId.isEmpty
+                      ? null
+                      : () {
+                          Navigator.of(context).push<void>(
+                            MaterialPageRoute<void>(
+                              builder: (_) => UserRatingsScreen(
+                                ratings: widget.ratings,
+                                userId: workerId,
+                                title: 'My reviews',
+                              ),
+                            ),
+                          );
+                        },
                 ),
               ),
             ),
@@ -390,7 +440,7 @@ class _ActiveShiftSnap {
 class _HomeHeader extends StatelessWidget {
   const _HomeHeader({
     required this.greeting,
-    required this.name,
+    required this.displayName,
     required this.unread,
     required this.completed,
     required this.rating,
@@ -399,7 +449,7 @@ class _HomeHeader extends StatelessWidget {
   });
 
   final String greeting;
-  final String name;
+  final String displayName;
   final int unread;
   final int completed;
   final double rating;
@@ -411,6 +461,8 @@ class _HomeHeader extends StatelessWidget {
     final topInset = MediaQuery.paddingOf(context).top;
     final ratingLine =
         rating > 0 ? '${rating.toStringAsFixed(1)}★' : '—';
+    final highlightRating = rating >= 4.0 && rating > 0;
+    final highlightCompleted = !highlightRating && completed > 0;
 
     return Container(
       decoration: const BoxDecoration(
@@ -483,6 +535,23 @@ class _HomeHeader extends StatelessWidget {
               ),
             ),
           ),
+          Positioned(
+            top: 118,
+            right: 20,
+            child: IgnorePointer(
+              child: Transform.rotate(
+                angle: 0.38,
+                child: Container(
+                  width: 52,
+                  height: 52,
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(14),
+                    color: const Color(0xFF38BDF8).withValues(alpha: 0.16),
+                  ),
+                ),
+              ),
+            ),
+          ),
           Padding(
             padding: EdgeInsets.fromLTRB(20, topInset + 18, 20, 26),
             child: Column(
@@ -506,13 +575,13 @@ class _HomeHeader extends StatelessWidget {
                           ),
                           const SizedBox(height: 8),
                           Text(
-                            name,
+                            displayName,
                             style: GoogleFonts.inter(
-                              fontSize: 32,
+                              fontSize: 24,
                               fontWeight: FontWeight.w900,
                               color: Colors.white,
-                              letterSpacing: -0.85,
-                              height: 1.05,
+                              letterSpacing: -0.5,
+                              height: 1.12,
                             ),
                           ),
                         ],
@@ -581,6 +650,8 @@ class _HomeHeader extends StatelessWidget {
                   children: [
                     Expanded(
                       child: _HeroGlassStat(
+                        highlighted: highlightCompleted,
+                        glowColor: const Color(0xFF93C5FD),
                         leading: Container(
                           width: 28,
                           height: 28,
@@ -601,6 +672,8 @@ class _HomeHeader extends StatelessWidget {
                     const SizedBox(width: 10),
                     Expanded(
                       child: _HeroGlassStat(
+                        highlighted: highlightRating,
+                        glowColor: const Color(0xFFFBBF24),
                         leading: const Icon(
                           Icons.star_rounded,
                           color: Color(0xFFFBBF24),
@@ -613,6 +686,8 @@ class _HomeHeader extends StatelessWidget {
                     const SizedBox(width: 10),
                       Expanded(
                       child: _HeroGlassStat(
+                        highlighted: false,
+                        glowColor: null,
                         leading: Icon(
                           Icons.send_rounded,
                           color: const Color(0xFF6366F1),
@@ -638,22 +713,43 @@ class _HeroGlassStat extends StatelessWidget {
     required this.leading,
     required this.value,
     required this.label,
+    this.highlighted = false,
+    this.glowColor,
   });
 
   final Widget leading;
   final String value;
   final String label;
+  final bool highlighted;
+  final Color? glowColor;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 280),
+      curve: Curves.easeOutCubic,
       padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 6),
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.2),
+        color: highlighted
+            ? Colors.white.withValues(alpha: 0.34)
+            : Colors.white.withValues(alpha: 0.2),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
-          color: Colors.white.withValues(alpha: 0.38),
+          color: highlighted
+              ? Colors.white.withValues(alpha: 0.85)
+              : Colors.white.withValues(alpha: 0.38),
+          width: highlighted ? 1.5 : 1,
         ),
+        boxShadow: highlighted && glowColor != null
+            ? [
+                BoxShadow(
+                  color: glowColor!.withValues(alpha: 0.45),
+                  blurRadius: 18,
+                  spreadRadius: -2,
+                  offset: const Offset(0, 6),
+                ),
+              ]
+            : null,
       ),
       child: Column(
         children: [
@@ -995,7 +1091,7 @@ class _DashboardJobCard extends StatelessWidget {
             ],
           ),
           child: Padding(
-            padding: const EdgeInsets.all(14),
+            padding: const EdgeInsets.all(16),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -1013,7 +1109,7 @@ class _DashboardJobCard extends StatelessWidget {
                           color: const Color(0xFF1D3557),
                         ),
                       ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 8),
                       Text(
                         businessName,
                         style: GoogleFonts.inter(
@@ -1022,7 +1118,7 @@ class _DashboardJobCard extends StatelessWidget {
                           color: AgapColors.textMuted,
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 12),
                       Wrap(
                         spacing: 10,
                         runSpacing: 6,
@@ -1177,10 +1273,14 @@ class _RatingSummaryCard extends StatelessWidget {
   const _RatingSummaryCard({
     required this.rating,
     required this.completed,
+    this.feedbackSnippet,
+    this.onViewAllRatings,
   });
 
   final double rating;
   final int completed;
+  final String? feedbackSnippet;
+  final VoidCallback? onViewAllRatings;
 
   @override
   Widget build(BuildContext context) {
@@ -1194,9 +1294,9 @@ class _RatingSummaryCard extends StatelessWidget {
         border: Border.all(color: const Color(0xFFE8EAEF)),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
-            blurRadius: 16,
-            offset: const Offset(0, 6),
+            color: Colors.black.withValues(alpha: 0.06),
+            blurRadius: 20,
+            offset: const Offset(0, 8),
           ),
         ],
       ),
@@ -1244,6 +1344,31 @@ class _RatingSummaryCard extends StatelessWidget {
                         color: const Color(0xFF74777F),
                       ),
                     ),
+                    if (feedbackSnippet != null &&
+                        feedbackSnippet!.trim().isNotEmpty) ...[
+                      const SizedBox(height: 12),
+                      Container(
+                        width: double.infinity,
+                        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FAFC),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: const Color(0xFFE2E8F0),
+                          ),
+                        ),
+                        child: Text(
+                          '“${feedbackSnippet!.trim()}”',
+                          style: GoogleFonts.inter(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            height: 1.45,
+                            fontStyle: FontStyle.italic,
+                            color: const Color(0xFF334155),
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
@@ -1262,6 +1387,27 @@ class _RatingSummaryCard extends StatelessWidget {
                 ),
             ],
           ),
+          if (onViewAllRatings != null) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton(
+                onPressed: onViewAllRatings,
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF2563EB),
+                  padding: EdgeInsets.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: Text(
+                  'View all ratings',
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w800,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 18),
           ClipRRect(
             borderRadius: BorderRadius.circular(999),

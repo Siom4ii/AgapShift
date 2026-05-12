@@ -13,25 +13,56 @@ class SupabaseMessagingRepository implements MessagingRepository {
 
   String? get _me => _client.auth.currentUser?.id;
 
+  Future<int> _unreadFromPeer({
+    required String conversationId,
+    required String me,
+    DateTime? lastReadAt,
+  }) async {
+    dynamic res;
+    if (lastReadAt == null) {
+      res = await _client
+          .from('dm_messages')
+          .select('id')
+          .eq('conversation_id', conversationId)
+          .neq('sender_id', me);
+    } else {
+      res = await _client
+          .from('dm_messages')
+          .select('id')
+          .eq('conversation_id', conversationId)
+          .neq('sender_id', me)
+          .gt('created_at', lastReadAt.toUtc().toIso8601String());
+    }
+    return (res as List<dynamic>).length;
+  }
+
   @override
   Future<List<DmConversationSummary>> listConversations() async {
     final me = _me;
     if (me == null) return [];
     final mem = await _client
         .from('dm_conversation_members')
-        .select('conversation_id')
+        .select('conversation_id, last_read_at')
         .eq('user_id', me);
     final list = mem as List<dynamic>;
-    final convIds = list
-        .map((e) => (e as Map<String, dynamic>)['conversation_id'] as String)
-        .toSet()
-        .toList();
-    if (convIds.isEmpty) return [];
+    final lastReadByConv = <String, DateTime?>{};
+    final convIds = <String>[];
+    for (final raw in list) {
+      final m = Map<String, dynamic>.from(raw as Map);
+      final cid = m['conversation_id'] as String?;
+      if (cid == null || cid.isEmpty) continue;
+      convIds.add(cid);
+      final lr = m['last_read_at'];
+      lastReadByConv[cid] =
+          lr == null ? null : DateTime.tryParse(lr.toString());
+    }
+    final uniqueIds = convIds.toSet().toList();
+    if (uniqueIds.isEmpty) return [];
 
     final convRows = await _client
         .from('dm_conversations')
         .select('id, updated_at')
-        .inFilter('id', convIds)
+        .inFilter('id', uniqueIds)
         .order('updated_at', ascending: false);
 
     final rows = convRows as List<dynamic>;
@@ -54,12 +85,19 @@ class SupabaseMessagingRepository implements MessagingRepository {
       otherIds.add(otherId);
       final last = await _client
           .from('dm_messages')
-          .select('body')
+          .select('body, sender_id')
           .eq('conversation_id', cid)
           .order('created_at', ascending: false)
           .limit(1)
           .maybeSingle();
       final preview = last == null ? '' : ((last['body'] as String?) ?? '');
+      final lastSender =
+          last == null ? null : (last['sender_id'] as String?);
+      final unread = await _unreadFromPeer(
+        conversationId: cid,
+        me: me,
+        lastReadAt: lastReadByConv[cid],
+      );
       summaries.add(
         DmConversationSummary(
           conversationId: cid,
@@ -67,6 +105,8 @@ class SupabaseMessagingRepository implements MessagingRepository {
           otherDisplayName: _peerFallback(otherId),
           lastPreview: preview,
           updatedAt: updatedAt,
+          lastMessageSenderId: lastSender,
+          unreadCount: unread,
         ),
       );
     }
@@ -81,6 +121,8 @@ class SupabaseMessagingRepository implements MessagingRepository {
           otherDisplayName: n,
           lastPreview: s.lastPreview,
           updatedAt: s.updatedAt,
+          lastMessageSenderId: s.lastMessageSenderId,
+          unreadCount: s.unreadCount,
         );
       }
       return s;

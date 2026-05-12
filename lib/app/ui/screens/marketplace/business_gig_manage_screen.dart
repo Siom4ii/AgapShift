@@ -42,6 +42,7 @@ class _BusinessGigManageScreenState extends State<BusinessGigManageScreen> {
   String? _hiredWorkerId;
   List<ShiftDaySummary> _summaries = const [];
   int _ratingRefreshTick = 0;
+  int _applicantCount = 0;
 
   static const _bg = Color(0xFFF6F7FB);
   static const _titleNavy = Color(0xFF0F172A);
@@ -60,6 +61,7 @@ class _BusinessGigManageScreenState extends State<BusinessGigManageScreen> {
   void initState() {
     super.initState();
     _loadAttendance();
+    _loadApplicantsCount();
   }
 
   String _dateLine(DateTime a, DateTime b) {
@@ -117,6 +119,17 @@ class _BusinessGigManageScreenState extends State<BusinessGigManageScreen> {
     }
   }
 
+  Future<void> _loadApplicantsCount() async {
+    try {
+      final apps = await widget.repo.listApplicants(widget.gig.id);
+      if (!mounted) return;
+      setState(() => _applicantCount = apps.length);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _applicantCount = 0);
+    }
+  }
+
   Future<void> _openApplicants() async {
     await Navigator.of(context).push<void>(
       MaterialPageRoute<void>(
@@ -131,6 +144,7 @@ class _BusinessGigManageScreenState extends State<BusinessGigManageScreen> {
       ),
     );
     await _loadAttendance();
+    await _loadApplicantsCount();
   }
 
   Future<void> _openQr(AttendanceScanType type) async {
@@ -200,6 +214,11 @@ class _BusinessGigManageScreenState extends State<BusinessGigManageScreen> {
         g.startAt.toLocal().month != g.endAt.toLocal().month ||
         g.startAt.toLocal().year != g.endAt.toLocal().year;
     final businessUserId = appActorId(widget.session, mockFallback: '');
+    final attendanceLockedReason = expired
+        ? 'Attendance is disabled for expired listings.'
+        : (_hiredWorkerId == null
+            ? 'Hire a worker to enable attendance tracking.'
+            : null);
 
     return Scaffold(
       backgroundColor: _bg,
@@ -222,128 +241,212 @@ class _BusinessGigManageScreenState extends State<BusinessGigManageScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Row(
+                          Stack(
+                            clipBehavior: Clip.none,
                             children: [
-                              Material(
-                                color: Colors.white.withValues(alpha: 0.22),
-                                shape: const CircleBorder(),
-                                clipBehavior: Clip.antiAlias,
-                                child: IconButton(
-                                  onPressed: () => Navigator.of(context).maybePop(),
-                                  icon: const Icon(
-                                    Icons.arrow_back_ios_new_rounded,
-                                    color: Colors.white,
-                                    size: 20,
+                              Positioned(
+                                right: -40,
+                                top: -24,
+                                child: IgnorePointer(
+                                  child: Container(
+                                    width: 160,
+                                    height: 160,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color:
+                                          Colors.white.withValues(alpha: 0.08),
+                                    ),
                                   ),
                                 ),
                               ),
-                              const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'Job listing',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w700,
-                                        color: Colors.white.withValues(alpha: 0.9),
-                                      ),
-                                    ),
-                                    const SizedBox(height: 4),
-                                    Text(
-                                      g.title,
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: GoogleFonts.inter(
-                                        fontSize: 20,
-                                        fontWeight: FontWeight.w900,
-                                        color: Colors.white,
-                                        height: 1.15,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 14),
-                          Container(
-                            padding: const EdgeInsets.all(14),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.16),
-                              borderRadius: BorderRadius.circular(18),
-                              border: Border.all(
-                                color: Colors.white.withValues(alpha: 0.18),
-                              ),
-                            ),
-                            child: Row(
-                              children: [
-                                Container(
-                                  width: 44,
-                                  height: 44,
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.18),
-                                    borderRadius: BorderRadius.circular(14),
-                                    border: Border.all(
-                                      color: Colors.white.withValues(alpha: 0.16),
+                              Positioned(
+                                left: -52,
+                                top: 56,
+                                child: IgnorePointer(
+                                  child: Container(
+                                    width: 140,
+                                    height: 140,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color:
+                                          Colors.white.withValues(alpha: 0.06),
                                     ),
                                   ),
-                                  child: const Icon(
-                                    Icons.work_rounded,
-                                    color: Colors.white,
-                                    size: 24,
-                                  ),
                                 ),
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Row(
                                     children: [
-                                      Text(
-                                        '${g.category} · ₱$payDay/day',
-                                        style: GoogleFonts.inter(
-                                          fontSize: 13,
-                                          fontWeight: FontWeight.w800,
-                                          color: Colors.white,
+                                      Material(
+                                        color: Colors.white.withValues(alpha: 0.22),
+                                        shape: const CircleBorder(),
+                                        clipBehavior: Clip.antiAlias,
+                                        child: IconButton(
+                                          onPressed: () =>
+                                              Navigator.of(context).maybePop(),
+                                          icon: const Icon(
+                                            Icons.arrow_back_ios_new_rounded,
+                                            color: Colors.white,
+                                            size: 20,
+                                          ),
                                         ),
                                       ),
-                                      const SizedBox(height: 6),
-                                      Text(
-                                        '${_dateLine(g.startAt, g.endAt)} • ${_timeLine(g.startAt, g.endAt)}',
-                                        style: GoogleFonts.inter(
-                                          fontSize: 12.5,
-                                          fontWeight: FontWeight.w600,
-                                          color: Colors.white.withValues(alpha: 0.9),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              'Job listing',
+                                              style: GoogleFonts.inter(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w700,
+                                                color: Colors.white.withValues(
+                                                  alpha: 0.9,
+                                                ),
+                                              ),
+                                            ),
+                                            const SizedBox(height: 4),
+                                            Text(
+                                              g.title,
+                                              maxLines: 2,
+                                              overflow: TextOverflow.ellipsis,
+                                              style: GoogleFonts.inter(
+                                                fontSize: 20,
+                                                fontWeight: FontWeight.w900,
+                                                color: Colors.white,
+                                                height: 1.15,
+                                              ),
+                                            ),
+                                          ],
                                         ),
                                       ),
                                     ],
                                   ),
-                                ),
-                                const SizedBox(width: 10),
-                                FilledButton(
-                                  onPressed: _openApplicants,
-                                  style: FilledButton.styleFrom(
-                                    backgroundColor: Colors.white,
-                                    foregroundColor: AgapColors.businessGreenDeep,
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 12,
-                                      vertical: 12,
+                                  const SizedBox(height: 14),
+                                  Container(
+                                    padding: const EdgeInsets.all(14),
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withValues(alpha: 0.16),
+                                      borderRadius: BorderRadius.circular(18),
+                                      border: Border.all(
+                                        color: Colors.white.withValues(alpha: 0.18),
+                                      ),
                                     ),
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(14),
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 44,
+                                          height: 44,
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withValues(alpha: 0.18),
+                                            borderRadius: BorderRadius.circular(14),
+                                            border: Border.all(
+                                              color: Colors.white.withValues(
+                                                alpha: 0.16,
+                                              ),
+                                            ),
+                                          ),
+                                          child: const Icon(
+                                            Icons.work_rounded,
+                                            color: Colors.white,
+                                            size: 24,
+                                          ),
+                                        ),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                '${g.category} · ₱$payDay/day',
+                                                style: GoogleFonts.inter(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w800,
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 6),
+                                              Text(
+                                                '${_dateLine(g.startAt, g.endAt)} • ${_timeLine(g.startAt, g.endAt)}',
+                                                style: GoogleFonts.inter(
+                                                  fontSize: 12.5,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: Colors.white.withValues(
+                                                    alpha: 0.9,
+                                                  ),
+                                                ),
+                                              ),
+                                              const SizedBox(height: 8),
+                                              Wrap(
+                                                spacing: 8,
+                                                runSpacing: 6,
+                                                crossAxisAlignment:
+                                                    WrapCrossAlignment.center,
+                                                children: [
+                                                  _Pill(
+                                                    label: completed
+                                                        ? 'Completed'
+                                                        : (expired ? 'Expired' : 'Open'),
+                                                    bg: Colors.white.withValues(
+                                                      alpha: 0.18,
+                                                    ),
+                                                    fg: Colors.white,
+                                                    border: Colors.white.withValues(
+                                                      alpha: 0.22,
+                                                    ),
+                                                  ),
+                                                  if (g.workersNeeded != null &&
+                                                      g.workersNeeded! > 0)
+                                                    _Pill(
+                                                      label:
+                                                          '${_hiredWorkerId == null ? 0 : 1}/${g.workersNeeded} hired',
+                                                      bg: Colors.white.withValues(
+                                                        alpha: 0.18,
+                                                      ),
+                                                      fg: Colors.white,
+                                                      border: Colors.white.withValues(
+                                                        alpha: 0.22,
+                                                      ),
+                                                    ),
+                                                ],
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(width: 10),
+                                        FilledButton(
+                                          onPressed: _openApplicants,
+                                          style: FilledButton.styleFrom(
+                                            backgroundColor: Colors.white,
+                                            foregroundColor:
+                                                AgapColors.businessGreenDeep,
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 12,
+                                              vertical: 12,
+                                            ),
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius: BorderRadius.circular(14),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            _applicantCount > 0
+                                                ? 'Applicants ($_applicantCount)'
+                                                : 'Applicants',
+                                            style: GoogleFonts.inter(
+                                              fontWeight: FontWeight.w900,
+                                              fontSize: 12.5,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
                                     ),
                                   ),
-                                  child: Text(
-                                    'Applicants',
-                                    style: GoogleFonts.inter(
-                                      fontWeight: FontWeight.w900,
-                                      fontSize: 12.5,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
+                                ],
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -505,15 +608,7 @@ class _BusinessGigManageScreenState extends State<BusinessGigManageScreen> {
                         ],
                         _SectionCard(
                           title: 'Details',
-                          child: Text(
-                            g.description,
-                            style: GoogleFonts.inter(
-                              fontSize: 13.5,
-                              height: 1.55,
-                              fontWeight: FontWeight.w500,
-                              color: _titleNavy,
-                            ),
-                          ),
+                          child: _DetailsBreakdown(description: g.description),
                         ),
                         const SizedBox(height: 12),
                         _SectionCard(
@@ -590,6 +685,31 @@ class _BusinessGigManageScreenState extends State<BusinessGigManageScreen> {
                                   ),
                                 ],
                               ),
+                              if (attendanceLockedReason != null) ...[
+                                const SizedBox(height: 10),
+                                Row(
+                                  children: [
+                                    Icon(
+                                      Icons.lock_outline_rounded,
+                                      size: 16,
+                                      color:
+                                          AgapColors.textMuted.withValues(alpha: 0.85),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Expanded(
+                                      child: Text(
+                                        attendanceLockedReason,
+                                        style: GoogleFonts.inter(
+                                          fontSize: 12.5,
+                                          height: 1.35,
+                                          fontWeight: FontWeight.w600,
+                                          color: AgapColors.textMuted,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                               const SizedBox(height: 14),
                               if (_attendanceError != null)
                                 _InlineError(text: _attendanceError!)
@@ -709,8 +829,8 @@ class _InfoTile extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Container(
-          width: 38,
-          height: 38,
+          width: 34,
+          height: 34,
           decoration: BoxDecoration(
             color: AgapColors.businessMint.withValues(alpha: 0.85),
             borderRadius: BorderRadius.circular(14),
@@ -747,6 +867,200 @@ class _InfoTile extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _Pill extends StatelessWidget {
+  const _Pill({
+    required this.label,
+    required this.bg,
+    required this.fg,
+    required this.border,
+  });
+
+  final String label;
+  final Color bg;
+  final Color fg;
+  final Color border;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: border),
+      ),
+      child: Text(
+        label,
+        style: GoogleFonts.inter(
+          fontSize: 11.5,
+          fontWeight: FontWeight.w900,
+          color: fg,
+          letterSpacing: 0.2,
+        ),
+      ),
+    );
+  }
+}
+
+class _DetailsBreakdown extends StatelessWidget {
+  const _DetailsBreakdown({required this.description});
+
+  final String description;
+
+  static const _kTitleNavy = Color(0xFF0F172A);
+
+  ({String? desc, String? req, String? benefits, String? workers}) _split() {
+    final raw = description.trim();
+    if (raw.isEmpty) return (desc: null, req: null, benefits: null, workers: null);
+
+    String? takeLineValue(String prefix) {
+      final m = RegExp(
+        '^\\s*${RegExp.escape(prefix)}\\s*:\\s*(.+)\\s*\$',
+        caseSensitive: false,
+        multiLine: true,
+      ).firstMatch(raw);
+      return m?.group(1)?.trim();
+    }
+
+    final req = takeLineValue('Requirements');
+    final benefits = takeLineValue('Benefits');
+    final workers = takeLineValue('Workers needed');
+
+    // Description = lines that are not the labeled lines above.
+    final filtered = raw
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty)
+        .where(
+          (l) =>
+              !l.toLowerCase().startsWith('requirements:') &&
+              !l.toLowerCase().startsWith('benefits:') &&
+              !l.toLowerCase().startsWith('workers needed:'),
+        )
+        .toList();
+    final desc = filtered.isEmpty ? null : filtered.join('\n');
+
+    return (desc: desc, req: req, benefits: benefits, workers: workers);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final parts = _split();
+
+    Widget row({
+      required IconData icon,
+      required String label,
+      required String value,
+    }) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: AgapColors.businessMint.withValues(alpha: 0.85),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: AgapColors.businessGreenDeep.withValues(alpha: 0.12),
+              ),
+            ),
+            child: Icon(
+              icon,
+              size: 18,
+              color: AgapColors.businessGreenDeep,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: GoogleFonts.inter(
+                    fontSize: 12.2,
+                    fontWeight: FontWeight.w800,
+                    color: AgapColors.textMuted,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: GoogleFonts.inter(
+                    fontSize: 13.5,
+                    height: 1.55,
+                    fontWeight: FontWeight.w600,
+                    color: _kTitleNavy,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    final children = <Widget>[];
+    if ((parts.desc ?? '').trim().isNotEmpty) {
+      children.add(
+        row(
+          icon: Icons.description_outlined,
+          label: 'Description',
+          value: parts.desc!.trim(),
+        ),
+      );
+    }
+    if ((parts.req ?? '').trim().isNotEmpty) {
+      if (children.isNotEmpty) children.add(const SizedBox(height: 12));
+      children.add(
+        row(
+          icon: Icons.checklist_rounded,
+          label: 'Requirements',
+          value: parts.req!.trim(),
+        ),
+      );
+    }
+    if ((parts.benefits ?? '').trim().isNotEmpty) {
+      if (children.isNotEmpty) children.add(const SizedBox(height: 12));
+      children.add(
+        row(
+          icon: Icons.card_giftcard_rounded,
+          label: 'Benefits',
+          value: parts.benefits!.trim(),
+        ),
+      );
+    }
+    if ((parts.workers ?? '').trim().isNotEmpty) {
+      if (children.isNotEmpty) children.add(const SizedBox(height: 12));
+      children.add(
+        row(
+          icon: Icons.groups_outlined,
+          label: 'Workers needed',
+          value: parts.workers!.trim(),
+        ),
+      );
+    }
+
+    if (children.isEmpty) {
+      return Text(
+        description,
+        style: GoogleFonts.inter(
+          fontSize: 13.5,
+          height: 1.55,
+          fontWeight: FontWeight.w500,
+          color: _kTitleNavy,
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: children,
     );
   }
 }

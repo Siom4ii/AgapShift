@@ -1,8 +1,11 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../../../domain/business_identity.dart';
 import '../../../../domain/enums.dart';
@@ -21,13 +24,1312 @@ import '../../../supabase/supabase_config.dart';
 import '../../../profile/worker_display_names.dart';
 import '../../theme/agap_colors.dart';
 import '../../widgets/locked_action.dart';
-import '../../widgets/success_feedback.dart';
 import '../subscriptions/worker_subscription_screen.dart';
 
 const Color _purpleDeep = Color(0xFF5B21B6);
 const Color _purple = Color(0xFF7C3AED);
 const Color _purpleBright = Color(0xFF8B5CF6);
 const Color _pageBg = Color(0xFFF3F4F6);
+
+/// Replace with your live URLs when available.
+const String _kPrivacyPolicyUrl = 'https://agapshift.app/privacy';
+const String _kTermsUrl = 'https://agapshift.app/terms';
+
+enum WorkerApplyDialogResult { cancelled, completedStay, completedBrowseJobs }
+
+const Color _linkPurple = Color(0xFF9B87F0);
+const Color _linkPurplePressed = Color(0xFF7C3AED);
+
+Color _hairlineDivider([double opacity = 0.11]) =>
+    const Color(0xFF0F172A).withValues(alpha: opacity);
+
+class WorkerApplyJobSnapshot {
+  const WorkerApplyJobSnapshot({
+    required this.title,
+    required this.businessName,
+    required this.payLine,
+    required this.durationLine,
+    required this.scheduleLine,
+    required this.locationLine,
+    this.employerVerified = false,
+  });
+
+  final String title;
+  final String businessName;
+  final String payLine;
+  final String durationLine;
+  final String scheduleLine;
+  final String locationLine;
+  final bool employerVerified;
+}
+
+String _formatApplyScheduleLine(Gig g) {
+  final sl = g.startAt.toLocal();
+  final el = g.endAt.toLocal();
+  String t(DateTime d) {
+    final h24 = d.hour;
+    final h = h24 > 12 ? h24 - 12 : (h24 == 0 ? 12 : h24);
+    final ap = h24 >= 12 ? 'PM' : 'AM';
+    final m = d.minute.toString().padLeft(2, '0');
+    return '$h:$m $ap';
+  }
+
+  const months = [
+    'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+  ];
+  final sameDay =
+      sl.year == el.year && sl.month == el.month && sl.day == el.day;
+  if (sameDay) {
+    return '${months[sl.month - 1]} ${sl.day} · ${t(sl)} – ${t(el)}';
+  }
+  return '${months[sl.month - 1]} ${sl.day} ${t(sl)} → ${months[el.month - 1]} ${el.day} ${t(el)}';
+}
+
+Future<void> _openPolicyUrl(BuildContext context, Uri uri) async {
+  try {
+    if (await canLaunchUrl(uri)) {
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      return;
+    }
+  } catch (_) {}
+  if (context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Could not open link: $uri')),
+    );
+  }
+}
+
+void _showFullLegalSheet(
+  BuildContext context, {
+  required String title,
+  required String body,
+}) {
+  final h = MediaQuery.sizeOf(context).height * 0.72;
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    backgroundColor: Colors.white,
+    shape: const RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+    ),
+    builder: (ctx) {
+      return SafeArea(
+        child: SizedBox(
+          height: h,
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(
+              20,
+              8,
+              20,
+              16 + MediaQuery.paddingOf(ctx).bottom,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.inter(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w900,
+                    color: const Color(0xFF111827),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Expanded(
+                  child: SingleChildScrollView(
+                    child: Text(
+                      body,
+                      style: GoogleFonts.inter(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        height: 1.5,
+                        color: const Color(0xFF6B7280),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _purple,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  child: Text(
+                    'Close',
+                    style: GoogleFonts.inter(fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+    },
+  );
+}
+
+const String _kFullPrivacyBody =
+    'Republic Act No. 10173 (Data Privacy Act of 2012)\n\n'
+    'AgapShift collects and processes personal information you provide '
+    '(such as your name, contact details, profile information, and work-related '
+    'documents) to operate the platform, verify accounts, match you with '
+    'employers, and communicate about applications and shifts.\n\n'
+    'We use your data only for legitimate purposes, strive to keep it accurate '
+    'and secure, and retain it only as long as needed for those purposes or as '
+    'required by law. Depending on applicable law, you may have rights to access, '
+    'correct, or object to certain processing.\n\n'
+    'By submitting an application, you confirm that the information you provide '
+    'is truthful to the best of your knowledge.';
+
+const String _kFullTermsBody =
+    '• Your application does not guarantee employment; the employer decides who to hire.\n'
+    '• You agree to communicate honestly and to attend as agreed if hired, or withdraw in good time if you cannot.\n'
+    '• Pay, schedule, and duties follow the listing and any agreement with the employer; AgapShift is not a party to your employment contract.\n'
+    '• You must not misuse the platform (including fraud, harassment, or false documents).\n'
+    '• AgapShift may update policies and notices; continued use may constitute acceptance where permitted by law.';
+
+Future<WorkerApplyDialogResult> showWorkerApplyConfirmationDialog(
+  BuildContext context, {
+  required WorkerApplyJobSnapshot snapshot,
+  required Future<void> Function() onSubmit,
+}) async {
+  final r = await showGeneralDialog<WorkerApplyDialogResult>(
+    context: context,
+    barrierDismissible: false,
+    barrierLabel: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+    barrierColor: Colors.transparent,
+    transitionDuration: const Duration(milliseconds: 260),
+    pageBuilder: (ctx, animation, secondaryAnimation) {
+      return SafeArea(
+        minimum: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Center(
+          child: FractionallySizedBox(
+            widthFactor: 0.89,
+            child: _ApplyJobDialog(snapshot: snapshot, onSubmit: onSubmit),
+          ),
+        ),
+      );
+    },
+    transitionBuilder: (ctx, animation, secondaryAnimation, child) {
+      final curved = CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+      );
+      return Stack(
+        fit: StackFit.expand,
+        children: [
+          FadeTransition(
+            opacity: curved,
+            child: BackdropFilter(
+              filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
+              child: Container(
+                color: Colors.black.withValues(alpha: 0.4),
+              ),
+            ),
+          ),
+          FadeTransition(
+            opacity: curved,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.95, end: 1).animate(curved),
+              child: child,
+            ),
+          ),
+        ],
+      );
+    },
+  );
+  return r ?? WorkerApplyDialogResult.cancelled;
+}
+
+class _ScaleOnPress extends StatefulWidget {
+  const _ScaleOnPress({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_ScaleOnPress> createState() => _ScaleOnPressState();
+}
+
+class _ScaleOnPressState extends State<_ScaleOnPress> {
+  bool _down = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      behavior: HitTestBehavior.translucent,
+      onPointerDown: (_) => setState(() => _down = true),
+      onPointerUp: (_) => setState(() => _down = false),
+      onPointerCancel: (_) => setState(() => _down = false),
+      child: AnimatedScale(
+        scale: _down ? 0.98 : 1,
+        duration: const Duration(milliseconds: 120),
+        curve: Curves.easeOutCubic,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+class _SoftPolicyLink extends StatefulWidget {
+  const _SoftPolicyLink({
+    required this.label,
+    required this.icon,
+    required this.onTap,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onTap;
+
+  @override
+  State<_SoftPolicyLink> createState() => _SoftPolicyLinkState();
+}
+
+class _SoftPolicyLinkState extends State<_SoftPolicyLink> {
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: widget.onTap,
+      onHighlightChanged: (v) => setState(() => _pressed = v),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 2),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              widget.icon,
+              size: 15,
+              color: _pressed ? _linkPurplePressed : _linkPurple,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                widget.label,
+                style: GoogleFonts.inter(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 13,
+                  height: 1.35,
+                  color: _pressed ? _linkPurplePressed : _linkPurple,
+                  decoration:
+                      _pressed ? TextDecoration.underline : TextDecoration.none,
+                  decorationColor: _linkPurplePressed,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ApplyJobDialog extends StatefulWidget {
+  const _ApplyJobDialog({
+    required this.snapshot,
+    required this.onSubmit,
+  });
+
+  final WorkerApplyJobSnapshot snapshot;
+  final Future<void> Function() onSubmit;
+
+  @override
+  State<_ApplyJobDialog> createState() => _ApplyJobDialogState();
+}
+
+class _ApplyJobDialogState extends State<_ApplyJobDialog>
+    with TickerProviderStateMixin {
+  bool _agreed = false;
+  bool _submitting = false;
+  bool _success = false;
+  String? _error;
+  bool _legalExpanded = false;
+  late final AnimationController _intro;
+  late final AnimationController _successReveal;
+
+  @override
+  void initState() {
+    super.initState();
+    _intro = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 280),
+    );
+    _successReveal = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 380),
+    );
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _intro.forward();
+    });
+  }
+
+  @override
+  void dispose() {
+    _intro.dispose();
+    _successReveal.dispose();
+    super.dispose();
+  }
+
+  Widget _applyModalChrome({required Widget child}) {
+    return Material(
+      color: Colors.transparent,
+      shadowColor: Colors.transparent,
+      child: Container(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.80,
+        ),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(28),
+          gradient: const LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [
+              Color(0xFFFFFFFF),
+              Color(0xFFF1F2F5),
+            ],
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.16),
+              blurRadius: 30,
+              offset: const Offset(0, 14),
+            ),
+          ],
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(28),
+          child: child,
+        ),
+      ),
+    );
+  }
+
+  Animation<double> _badgeEntrance(int index) => CurvedAnimation(
+        parent: _intro,
+        curve: Interval(
+          0.18 + index * 0.1,
+          0.92,
+          curve: Curves.easeOutCubic,
+        ),
+      );
+
+  Widget _animatedBadge(int index, Widget child) {
+    final a = _badgeEntrance(index);
+    return FadeTransition(
+      opacity: a,
+      child: SlideTransition(
+        position: Tween<Offset>(
+          begin: const Offset(0, 0.1),
+          end: Offset.zero,
+        ).animate(a),
+        child: child,
+      ),
+    );
+  }
+
+  Widget _hairline() => Divider(
+        height: 1,
+        thickness: 1,
+        color: _hairlineDivider(),
+      );
+
+  Future<void> _runSubmit() async {
+    setState(() {
+      _submitting = true;
+      _error = null;
+    });
+    try {
+      await widget.onSubmit();
+      if (mounted) {
+        setState(() => _success = true);
+        _successReveal.forward(from: 0);
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final s = widget.snapshot;
+    if (_success) {
+      final okCurved = CurvedAnimation(
+        parent: _successReveal,
+        curve: Curves.easeOutCubic,
+      );
+      return FadeTransition(
+        opacity: okCurved,
+        child: ScaleTransition(
+          scale: Tween<double>(begin: 0.92, end: 1).animate(okCurved),
+          child: _applyModalChrome(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(22, 22, 22, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 48,
+                      height: 3.5,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD1D5DB),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 18),
+                  Center(
+                    child: Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFD1FAE5),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: const Color(0xFF6EE7B7)),
+                      ),
+                      child: const Icon(
+                        Icons.check_rounded,
+                        color: Color(0xFF047857),
+                        size: 32,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'Application sent',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.inter(
+                      fontSize: 20,
+                      fontWeight: FontWeight.w900,
+                      color: const Color(0xFF111827),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Your application was submitted to the employer. They will review it and may contact you.',
+                    textAlign: TextAlign.center,
+                    style: GoogleFonts.inter(
+                      fontSize: 13.5,
+                      fontWeight: FontWeight.w600,
+                      height: 1.45,
+                      color: const Color(0xFF6B7280),
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  _ScaleOnPress(
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(14),
+                        onTap: () => Navigator.of(context)
+                            .pop(WorkerApplyDialogResult.completedBrowseJobs),
+                        child: Ink(
+                          decoration: BoxDecoration(
+                            borderRadius: BorderRadius.circular(14),
+                            gradient: const LinearGradient(
+                              colors: [
+                                Color(0xFF6D28D9),
+                                Color(0xFF7C3AED),
+                                Color(0xFFA78BFA),
+                              ],
+                            ),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            child: Center(
+                              child: Text(
+                                'View applications',
+                                style: GoogleFonts.inter(
+                                  fontWeight: FontWeight.w900,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  _ScaleOnPress(
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context)
+                            .pop(WorkerApplyDialogResult.completedStay),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: const Color(0xFF374151),
+                          side: const BorderSide(color: Color(0xFFE5E7EB)),
+                          backgroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                        ),
+                        child: Text(
+                          'Done',
+                          style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    final curved = CurvedAnimation(parent: _intro, curve: Curves.easeOutCubic);
+    final fade = Tween<double>(begin: 0, end: 1).animate(curved);
+    final slide =
+        Tween<Offset>(begin: const Offset(0, 0.035), end: Offset.zero).animate(curved);
+
+    return _applyModalChrome(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 22, 20, 0),
+            child: Column(
+              children: [
+                Center(
+                  child: Container(
+                    width: 48,
+                    height: 3.5,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFD1D5DB),
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                Text(
+                  'Apply to this job?',
+                  textAlign: TextAlign.center,
+                  style: GoogleFonts.inter(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: const Color(0xFF111827),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+              child: FadeTransition(
+                opacity: fade,
+                child: SlideTransition(
+                  position: slide,
+                  child: Stack(
+                    children: [
+                      Scrollbar(
+                        thickness: 3,
+                        radius: const Radius.circular(8),
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(20, 0, 22, 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF0F2F5),
+                                  borderRadius: BorderRadius.circular(18),
+                                  border: Border.all(
+                                    color: const Color(0xFFE1E4EA),
+                                  ),
+                                  boxShadow: [
+                                    BoxShadow(
+                                      color: Colors.black.withValues(alpha: 0.055),
+                                      blurRadius: 28,
+                                      offset: const Offset(0, 10),
+                                    ),
+                                  ],
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      s.title,
+                                      style: GoogleFonts.inter(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.w900,
+                                        color: const Color(0xFF111827),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+                                    Row(
+                                      crossAxisAlignment: CrossAxisAlignment.center,
+                                      children: [
+                                        Expanded(
+                                          child: Text(
+                                            s.businessName,
+                                            style: GoogleFonts.inter(
+                                              fontSize: 13,
+                                              fontWeight: FontWeight.w700,
+                                              color: const Color(0xFF6B7280),
+                                            ),
+                                          ),
+                                        ),
+                                        if (s.employerVerified) ...[
+                                          const SizedBox(width: 8),
+                                          Container(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 10,
+                                              vertical: 5,
+                                            ),
+                                            decoration: BoxDecoration(
+                                              color: const Color(0xFFD1FAE5),
+                                              borderRadius: BorderRadius.circular(999),
+                                              border: Border.all(
+                                                color: const Color(0xFF6EE7B7),
+                                              ),
+                                              boxShadow: [
+                                                BoxShadow(
+                                                  color: const Color(0xFF059669)
+                                                      .withValues(alpha: 0.12),
+                                                  blurRadius: 8,
+                                                  offset: const Offset(0, 2),
+                                                ),
+                                              ],
+                                            ),
+                                            child: Row(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                const Icon(
+                                                  Icons.verified_rounded,
+                                                  size: 16,
+                                                  color: Color(0xFF059669),
+                                                ),
+                                                const SizedBox(width: 5),
+                                                Text(
+                                                  'Verified employer',
+                                                  style: GoogleFonts.inter(
+                                                    fontSize: 11.5,
+                                                    fontWeight: FontWeight.w900,
+                                                    color: Color(0xFF047857),
+                                                    letterSpacing: 0.15,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                    const SizedBox(height: 12),
+                                    _snapRow(Icons.payments_outlined, s.payLine),
+                                    const SizedBox(height: 6),
+                                    _snapRow(Icons.schedule, s.durationLine),
+                                    const SizedBox(height: 6),
+                                    _snapRow(Icons.event_note_outlined, s.scheduleLine),
+                                    const SizedBox(height: 6),
+                                    _snapRow(Icons.place_outlined, s.locationLine),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              _hairline(),
+                              const SizedBox(height: 10),
+                              Wrap(
+                                spacing: 8,
+                                runSpacing: 8,
+                                children: [
+                                  _animatedBadge(
+                                    0,
+                                    const _TrustChip(
+                                      icon: Icons.lock_rounded,
+                                      label: 'Secure application',
+                                    ),
+                                  ),
+                                  _animatedBadge(
+                                    1,
+                                    const _TrustChip(
+                                      icon: Icons.verified_user_outlined,
+                                      label: 'Data protected',
+                                    ),
+                                  ),
+                                  _animatedBadge(
+                                    2,
+                                    const _TrustChip(
+                                      icon: Icons.handshake_outlined,
+                                      label: 'Fair hiring',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 8),
+                              _hairline(),
+                              const SizedBox(height: 8),
+                              Text(
+                                'By applying, your profile is shared with this employer.',
+                                style: GoogleFonts.inter(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.45,
+                                  color: const Color(0xFF6B7280),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              _ScaleOnPress(
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFE4E8EF),
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: const Color(0xFFC5CDD8),
+                                    ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: Colors.black.withValues(alpha: 0.07),
+                                        blurRadius: 14,
+                                        offset: const Offset(0, 5),
+                                      ),
+                                    ],
+                                  ),
+                                  child: ClipRRect(
+                                    borderRadius: BorderRadius.circular(16),
+                                    child: Theme(
+                                      data: Theme.of(context).copyWith(
+                                        dividerColor: Colors.transparent,
+                                        splashColor: _purple.withValues(alpha: 0.12),
+                                        highlightColor:
+                                            _purple.withValues(alpha: 0.06),
+                                      ),
+                                      child: ExpansionTile(
+                                        shape: const Border(),
+                                        collapsedShape: const Border(),
+                                        controlAffinity:
+                                            ListTileControlAffinity.trailing,
+                                        tilePadding: const EdgeInsets.symmetric(
+                                          horizontal: 14,
+                                          vertical: 2,
+                                        ),
+                                        childrenPadding: const EdgeInsets.fromLTRB(
+                                          14,
+                                          0,
+                                          14,
+                                          12,
+                                        ),
+                                        iconColor: _purple,
+                                        collapsedIconColor: _purple,
+                                        onExpansionChanged: (open) {
+                                          setState(() => _legalExpanded = open);
+                                        },
+                                        trailing: AnimatedRotation(
+                                          duration: const Duration(milliseconds: 200),
+                                          curve: Curves.easeOutCubic,
+                                          turns: _legalExpanded ? 0.5 : 0,
+                                          child: Icon(
+                                            Icons.expand_more_rounded,
+                                            color: _purple,
+                                            size: 26,
+                                          ),
+                                        ),
+                                        title: Text(
+                                          'Privacy & terms',
+                                          style: GoogleFonts.inter(
+                                            fontSize: 14.5,
+                                            fontWeight: FontWeight.w900,
+                                            color: const Color(0xFF111827),
+                                          ),
+                                        ),
+                                        subtitle: Padding(
+                                          padding: const EdgeInsets.only(top: 4),
+                                          child: Text(
+                                            'Optional — expand for highlights & full documents',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                              color: const Color(0xFF64748B),
+                                            ),
+                                          ),
+                                        ),
+                                        children: [
+                                    Text(
+                                      'AgapShift collects and processes your data to verify accounts and connect you with employers.',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w500,
+                                        height: 1.5,
+                                        color: const Color(0xFF6B7280),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 10),
+                                    _SoftPolicyLink(
+                                      label: 'View full privacy policy (web)',
+                                      icon: Icons.open_in_new_rounded,
+                                      onTap: () => _openPolicyUrl(
+                                        context,
+                                        Uri.parse(_kPrivacyPolicyUrl),
+                                      ),
+                                    ),
+                                    _SoftPolicyLink(
+                                      label: 'Read privacy policy in app',
+                                      icon: Icons.article_outlined,
+                                      onTap: () => _showFullLegalSheet(
+                                        context,
+                                        title: 'Privacy policy (full text)',
+                                        body: _kFullPrivacyBody,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 14),
+                                    Text(
+                                      'Terms highlights',
+                                      style: GoogleFonts.inter(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w900,
+                                        color: const Color(0xFF111827),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 6),
+                                    _bullet('Honest communication with the employer.'),
+                                    _bullet('Attendance responsibility if you are hired.'),
+                                    _bullet('Employment is not guaranteed by applying.'),
+                                    const SizedBox(height: 8),
+                                    _SoftPolicyLink(
+                                      label: 'View terms & conditions (web)',
+                                      icon: Icons.open_in_new_rounded,
+                                      onTap: () => _openPolicyUrl(
+                                        context,
+                                        Uri.parse(_kTermsUrl),
+                                      ),
+                                    ),
+                                    _SoftPolicyLink(
+                                      label: 'Read terms in app',
+                                      icon: Icons.article_outlined,
+                                      onTap: () => _showFullLegalSheet(
+                                        context,
+                                        title: 'Terms & conditions (full text)',
+                                        body: _kFullTermsBody,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                      ),
+                                    ),
+                                ),
+                              ),
+                              if (_error != null) ...[
+                                const SizedBox(height: 12),
+                                Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFFEF2F2),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(color: const Color(0xFFFECACA)),
+                                  ),
+                                  child: Text(
+                                    _error!,
+                                    style: GoogleFonts.inter(
+                                      fontWeight: FontWeight.w700,
+                                      color: const Color(0xFFB91C1C),
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                              const SizedBox(height: 12),
+                            ],
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: 0,
+                        right: 8,
+                        top: 0,
+                        height: 20,
+                        child: IgnorePointer(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [
+                                  Colors.white.withValues(alpha: 0.98),
+                                  Colors.white.withValues(alpha: 0),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        left: 0,
+                        right: 8,
+                        bottom: 0,
+                        height: 22,
+                        child: IgnorePointer(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.bottomCenter,
+                                end: Alignment.topCenter,
+                                colors: [
+                                  Colors.white.withValues(alpha: 0.96),
+                                  Colors.white.withValues(alpha: 0),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+            Material(
+              color: Colors.white,
+              elevation: 10,
+              shadowColor: Colors.black12,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  0,
+                  16,
+                  10 + MediaQuery.paddingOf(context).bottom,
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _hairline(),
+                    const SizedBox(height: 10),
+                    AnimatedContainer(
+                      duration: const Duration(milliseconds: 220),
+                      curve: Curves.easeOutCubic,
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFF3F4F6),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: _agreed
+                              ? _purple.withValues(alpha: 0.45)
+                              : const Color(0xFFE5E7EB),
+                          width: _agreed ? 1.5 : 1,
+                        ),
+                        boxShadow: _agreed
+                            ? [
+                                BoxShadow(
+                                  color: _purple.withValues(alpha: 0.22),
+                                  blurRadius: 14,
+                                  spreadRadius: 0,
+                                  offset: const Offset(0, 2),
+                                ),
+                              ]
+                            : const [],
+                      ),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Align(
+                            alignment: const Alignment(0, -0.08),
+                            child: Transform.scale(
+                              scale: _agreed ? 1.04 : 1.0,
+                              child: Checkbox(
+                                value: _agreed,
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                visualDensity: VisualDensity.compact,
+                                fillColor:
+                                    WidgetStateProperty.resolveWith((states) {
+                                  if (states.contains(WidgetState.selected)) {
+                                    return _purple;
+                                  }
+                                  return null;
+                                }),
+                                checkColor: Colors.white,
+                                side: BorderSide(
+                                  color: _agreed
+                                      ? _purple.withValues(alpha: 0.55)
+                                      : const Color(0xFF9CA3AF),
+                                  width: 1.5,
+                                ),
+                                onChanged: _submitting
+                                    ? null
+                                    : (v) =>
+                                        setState(() => _agreed = v ?? false),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: _submitting
+                                  ? null
+                                  : () => setState(() => _agreed = !_agreed),
+                              behavior: HitTestBehavior.opaque,
+                              child: Text(
+                                'I agree to the Privacy Policy and Terms.',
+                                style: GoogleFonts.inter(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  height: 1.4,
+                                  color: const Color(0xFF374151),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          flex: 2,
+                          child: _ScaleOnPress(
+                            child: Material(
+                              color: Colors.white,
+                              elevation: 0,
+                              borderRadius: BorderRadius.circular(14),
+                              child: OutlinedButton(
+                                onPressed: _submitting
+                                    ? null
+                                    : () => Navigator.of(context).pop(
+                                          WorkerApplyDialogResult.cancelled,
+                                        ),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFF6B7280),
+                                  side: const BorderSide(
+                                    color: Color(0xFFE5E7EB),
+                                  ),
+                                  backgroundColor: Colors.white,
+                                  elevation: 0,
+                                  shadowColor: Colors.transparent,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 13,
+                                  ),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(14),
+                                  ),
+                                ),
+                                child: Text(
+                                  'Cancel',
+                                  style: GoogleFonts.inter(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          flex: 3,
+                          child: _ScaleOnPress(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                borderRadius: BorderRadius.circular(14),
+                                gradient: const LinearGradient(
+                                  colors: [
+                                    Color(0xFF6D28D9),
+                                    Color(0xFF7C3AED),
+                                    Color(0xFFA78BFA),
+                                  ],
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: _purple.withValues(alpha: 0.35),
+                                    blurRadius: 12,
+                                    offset: const Offset(0, 4),
+                                  ),
+                                ],
+                              ),
+                              child: Material(
+                                color: Colors.transparent,
+                                elevation: (_agreed && !_submitting) ? 2 : 0,
+                                borderRadius: BorderRadius.circular(14),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(14),
+                                  onTap: (!_agreed || _submitting)
+                                      ? null
+                                      : _runSubmit,
+                                  child: Opacity(
+                                    opacity: (_agreed && !_submitting)
+                                        ? 1.0
+                                        : 0.62,
+                                    child: Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 13,
+                                      ),
+                                      child: Center(
+                                        child: _submitting
+                                            ? Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                children: [
+                                                  const SizedBox(
+                                                    width: 20,
+                                                    height: 20,
+                                                    child:
+                                                        CircularProgressIndicator(
+                                                      strokeWidth: 2,
+                                                      color: Colors.white,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(width: 10),
+                                                  Text(
+                                                    'Applying…',
+                                                    style: GoogleFonts.inter(
+                                                      fontWeight:
+                                                          FontWeight.w900,
+                                                      color: Colors.white,
+                                                    ),
+                                                  ),
+                                                ],
+                                              )
+                                            : Text(
+                                                'Apply',
+                                                style: GoogleFonts.inter(
+                                                  fontWeight: FontWeight.w900,
+                                                  fontSize: 15,
+                                                  color: Colors.white,
+                                                ),
+                                              ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Text(
+                          'Your profile is shared with the employer. You can withdraw while pending.',
+                          textAlign: TextAlign.start,
+                          style: GoogleFonts.inter(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            height: 1.4,
+                            color: const Color(0xFF6B7280),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  static Widget _snapRow(IconData icon, String text) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Icon(icon, size: 18, color: const Color(0xFF9CA3AF)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: GoogleFonts.inter(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              height: 1.35,
+              color: const Color(0xFF374151),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  static Widget _bullet(String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '• ',
+            style: GoogleFonts.inter(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFF9CA3AF),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              text,
+              style: GoogleFonts.inter(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                height: 1.45,
+                color: const Color(0xFF6B7280),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TrustChip extends StatelessWidget {
+  const _TrustChip({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF8F9FB),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: const Color(0xFFE8EAED)),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: const Color(0xFF6B7280)),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: GoogleFonts.inter(
+              fontSize: 10,
+              fontWeight: FontWeight.w800,
+              color: const Color(0xFF4B5563),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
 
 class _ParsedGigDescription {
   const _ParsedGigDescription({
@@ -107,6 +1409,7 @@ class _WorkerGigDetailsScreenState extends State<WorkerGigDetailsScreen> {
   Gig? _gig;
   GigApplication? _myApplication;
   String? _businessName;
+  bool _employerVerified = false;
   /// Full sentence for the Location card (profile municipality preferred over GPS).
   String? _locationDistanceLine;
   bool _loading = true;
@@ -151,6 +1454,20 @@ class _WorkerGigDetailsScreenState extends State<WorkerGigDetailsScreen> {
     return null;
   }
 
+  Future<bool> _fetchEmployerVerified(String businessId) async {
+    if (!SupabaseConfig.isConfigured || businessId.isEmpty) return false;
+    try {
+      final row = await Supabase.instance.client
+          .from('profiles')
+          .select('account_status')
+          .eq('id', businessId)
+          .maybeSingle();
+      return (row?['account_status'] as String?) == AccountStatus.verified.name;
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<void> _load() async {
     setState(() {
       _loading = true;
@@ -163,8 +1480,10 @@ class _WorkerGigDetailsScreenState extends State<WorkerGigDetailsScreen> {
       String? bizName;
       String? distanceLine;
       GigApplication? mine;
+      var employerVerified = false;
       if (gig != null) {
         bizName = await _fetchBusinessName(gig.businessId);
+        employerVerified = await _fetchEmployerVerified(gig.businessId);
         final workerId = appActorId(widget.session, mockFallback: 'worker');
         final muni = await _fetchWorkerMunicipality(workerId);
         final homePt = DavaoDelSur.approxCenterForMunicipality(muni);
@@ -193,6 +1512,7 @@ class _WorkerGigDetailsScreenState extends State<WorkerGigDetailsScreen> {
           _gig = gig;
           _myApplication = mine;
           _businessName = bizName;
+          _employerVerified = gig != null ? employerVerified : false;
           _locationDistanceLine = distanceLine;
         });
       }
@@ -256,45 +1576,76 @@ class _WorkerGigDetailsScreenState extends State<WorkerGigDetailsScreen> {
       );
       return;
     }
-    try {
-      final submitted = await widget.repo.applyToGig(
-        gigId: widget.gigId,
-        workerId: workerId,
-      );
-      final gig = await widget.repo.getGig(widget.gigId);
-      if (gig != null) {
-        final resolved =
-            (await fetchWorkerDisplayNamesById({workerId}))[workerId]?.trim();
-        final workerName = (resolved != null && resolved.isNotEmpty)
-            ? resolved
-            : applicantDisplayNameFallback(workerId);
-        await widget.notifications.add(
-          userId: gig.businessId,
-          title: 'New applicant',
-          body: '$workerName applied to: ${gig.title}',
-          data: {'gigId': gig.id},
-        );
-        await widget.notifications.add(
-          userId: workerId,
-          title: 'Application sent',
-          body: 'You applied to: ${gig.title}',
-          data: {'gigId': gig.id},
-        );
-      }
-      if (!mounted) return;
-      setState(() => _myApplication = submitted);
-      showSuccessSnackBar(context, 'Application sent successfully');
-    } catch (e) {
-      if (!mounted) return;
-      final msg = '$e';
-      if (msg.contains('Already applied')) {
-        await _load();
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Cannot apply: $e')),
-      );
+    final gig = _gig;
+    if (gig == null) return;
+
+    final business = (_businessName ?? 'Business').trim();
+    final minutes = gig.endAt.difference(gig.startAt).inMinutes.clamp(1, 24 * 60);
+    final hours = minutes / 60.0;
+    final durationLabel =
+        hours >= 1 ? '${hours.round()} hrs' : '$minutes min';
+    final payPrimary = _payLabel(gig, hours);
+    final loc = gig.addressLabel.trim();
+    final snapshot = WorkerApplyJobSnapshot(
+      title: gig.title,
+      businessName: business.isNotEmpty ? business : 'Business',
+      payLine: payPrimary,
+      durationLine: durationLabel,
+      scheduleLine: _formatApplyScheduleLine(gig),
+      locationLine: loc.isNotEmpty ? loc : 'Work site on map',
+      employerVerified: _employerVerified,
+    );
+
+    final result = await showWorkerApplyConfirmationDialog(
+      context,
+      snapshot: snapshot,
+      onSubmit: () async {
+        try {
+          final submitted = await widget.repo.applyToGig(
+            gigId: widget.gigId,
+            workerId: workerId,
+          );
+          final g2 = await widget.repo.getGig(widget.gigId);
+          if (g2 != null) {
+            final resolved =
+                (await fetchWorkerDisplayNamesById({workerId}))[workerId]?.trim();
+            final workerName = (resolved != null && resolved.isNotEmpty)
+                ? resolved
+                : applicantDisplayNameFallback(workerId);
+            await widget.notifications.add(
+              userId: g2.businessId,
+              title: 'New applicant',
+              body: '$workerName applied to: ${g2.title}',
+              data: {'gigId': g2.id},
+            );
+            await widget.notifications.add(
+              userId: workerId,
+              title: 'Application sent',
+              body: 'You applied to: ${g2.title}',
+              data: {'gigId': g2.id},
+            );
+          }
+          if (!mounted) return;
+          setState(() => _myApplication = submitted);
+        } catch (e) {
+          final msg = '$e';
+          if (msg.contains('Already applied') && mounted) {
+            await _load();
+          }
+          rethrow;
+        }
+      },
+    );
+    if (!mounted) return;
+    if (result == WorkerApplyDialogResult.completedBrowseJobs) {
+      Navigator.of(context).pop();
+      return;
     }
+    if (result == WorkerApplyDialogResult.cancelled) {
+      return;
+    }
+    // completedStay: stay on screen; success already shown in dialog.
+    return;
   }
 
   static String _formatStart(DateTime utc) {

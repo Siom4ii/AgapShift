@@ -53,6 +53,8 @@ class BusinessFindWorkersScreen extends StatefulWidget {
       _BusinessFindWorkersScreenState();
 }
 
+enum _WorkerSort { closest, topRated, mostShifts, lowestRate }
+
 class _BusinessFindWorkersScreenState extends State<BusinessFindWorkersScreen> {
   final _search = TextEditingController();
 
@@ -71,6 +73,7 @@ class _BusinessFindWorkersScreenState extends State<BusinessFindWorkersScreen> {
 
   int get _sectionSafe => (_section == 0 || _section == 1) ? _section : 0;
   int _filter = 0;
+  _WorkerSort _workerSort = _WorkerSort.closest;
   bool _loading = true;
   String? _error;
   String _locationSubtitle = DavaoDelSurScope.fallbackLocationLabel;
@@ -135,6 +138,35 @@ class _BusinessFindWorkersScreenState extends State<BusinessFindWorkersScreen> {
     }).toList();
   }
 
+  int? _pesoFromRateLabel(String s) {
+    final m = RegExp(r'₱\s*([\d,]+)').firstMatch(s);
+    if (m == null) return null;
+    return int.tryParse(m.group(1)!.replaceAll(',', ''));
+  }
+
+  List<DiscoverableWorker> _sortedWorkers(List<DiscoverableWorker> raw) {
+    final list = [...raw];
+    switch (_workerSort) {
+      case _WorkerSort.closest:
+        list.sort((a, b) => a.distanceKm.compareTo(b.distanceKm));
+        break;
+      case _WorkerSort.topRated:
+        list.sort((a, b) => b.rating.compareTo(a.rating));
+        break;
+      case _WorkerSort.mostShifts:
+        list.sort((a, b) => b.shiftsCompleted.compareTo(a.shiftsCompleted));
+        break;
+      case _WorkerSort.lowestRate:
+        list.sort((a, b) {
+          final pa = _pesoFromRateLabel(a.rateLabel) ?? 1 << 30;
+          final pb = _pesoFromRateLabel(b.rateLabel) ?? 1 << 30;
+          return pa.compareTo(pb);
+        });
+        break;
+    }
+    return list;
+  }
+
   @override
   void dispose() {
     _search.dispose();
@@ -144,7 +176,7 @@ class _BusinessFindWorkersScreenState extends State<BusinessFindWorkersScreen> {
   @override
   Widget build(BuildContext context) {
     final bottomSafe = MediaQuery.paddingOf(context).bottom;
-    final filtered = _filtered;
+    final filtered = _sortedWorkers(_filtered);
     final highlightCount = filtered
         .where((w) => w.availabilityHighlight)
         .length;
@@ -402,6 +434,41 @@ class _BusinessFindWorkersScreenState extends State<BusinessFindWorkersScreen> {
               ),
             ),
             SliverToBoxAdapter(
+              child: SizedBox(
+                height: 42,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.fromLTRB(20, 8, 20, 0),
+                  children: [
+                    _SortChip(
+                      label: 'Closest',
+                      selected: _workerSort == _WorkerSort.closest,
+                      onTap: () =>
+                          setState(() => _workerSort = _WorkerSort.closest),
+                    ),
+                    _SortChip(
+                      label: 'Top rated',
+                      selected: _workerSort == _WorkerSort.topRated,
+                      onTap: () =>
+                          setState(() => _workerSort = _WorkerSort.topRated),
+                    ),
+                    _SortChip(
+                      label: 'Most shifts',
+                      selected: _workerSort == _WorkerSort.mostShifts,
+                      onTap: () =>
+                          setState(() => _workerSort = _WorkerSort.mostShifts),
+                    ),
+                    _SortChip(
+                      label: 'Lowest rate',
+                      selected: _workerSort == _WorkerSort.lowestRate,
+                      onTap: () =>
+                          setState(() => _workerSort = _WorkerSort.lowestRate),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(20, 16, 20, 8),
                 child: Text(
@@ -468,6 +535,11 @@ class _BusinessFindWorkersScreenState extends State<BusinessFindWorkersScreen> {
                       child: _WorkerCard(
                         worker: filtered[i],
                         ratings: widget.ratings,
+                        onMessage: () => _openWorkerDirectMessage(
+                          hostContext: context,
+                          modalContext: context,
+                          worker: filtered[i],
+                        ),
                       ),
                     ),
                   ),
@@ -518,6 +590,7 @@ Future<void> _openWorkerDirectMessage({
         builder: (_) => MessageThreadScreen(
           conversationId: cid,
           title: worker.displayName,
+          peerUserId: worker.workerId,
         ),
       ),
     );
@@ -1288,14 +1361,115 @@ class _WorkerCircleAction extends StatelessWidget {
   }
 }
 
+class _SortChip extends StatelessWidget {
+  const _SortChip({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(20),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+          decoration: BoxDecoration(
+            color: selected ? AgapColors.businessMint : Colors.white,
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: selected
+                  ? AgapColors.businessGreen
+                  : AgapColors.borderSubtle,
+            ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: AgapColors.businessGreen.withValues(alpha: 0.22),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    ),
+                  ]
+                : null,
+          ),
+          child: Text(
+            label,
+            style: GoogleFonts.inter(
+              fontWeight: FontWeight.w800,
+              fontSize: 12,
+              color: selected
+                  ? AgapColors.businessGreenDeep
+                  : AgapColors.textMuted,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _LivePresenceDot extends StatefulWidget {
+  @override
+  State<_LivePresenceDot> createState() => _LivePresenceDotState();
+}
+
+class _LivePresenceDotState extends State<_LivePresenceDot>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _c = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _c.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return ScaleTransition(
+      scale: Tween<double>(begin: 0.92, end: 1.12).animate(
+        CurvedAnimation(parent: _c, curve: Curves.easeInOut),
+      ),
+      child: Container(
+        width: 12,
+        height: 12,
+        decoration: BoxDecoration(
+          color: AgapColors.businessGreen,
+          shape: BoxShape.circle,
+          border: Border.all(color: Colors.white, width: 2),
+          boxShadow: [
+            BoxShadow(
+              color: AgapColors.businessGreen.withValues(alpha: 0.55),
+              blurRadius: 8,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 class _WorkerCard extends StatelessWidget {
   const _WorkerCard({
     required this.worker,
     required this.ratings,
+    required this.onMessage,
   });
 
   final DiscoverableWorker worker;
   final RatingsRepository ratings;
+  final VoidCallback onMessage;
 
   @override
   Widget build(BuildContext context) {
@@ -1349,15 +1523,20 @@ class _WorkerCard extends StatelessWidget {
                         Positioned(
                           right: -2,
                           bottom: -2,
-                          child: Container(
-                            width: 12,
-                            height: 12,
-                            decoration: BoxDecoration(
-                              color: AgapColors.businessGreen,
-                              shape: BoxShape.circle,
-                              border: Border.all(color: Colors.white, width: 2),
-                            ),
-                          ),
+                          child: w.availabilityHighlight
+                              ? _LivePresenceDot()
+                              : Container(
+                                  width: 12,
+                                  height: 12,
+                                  decoration: BoxDecoration(
+                                    color: AgapColors.businessGreen,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: Colors.white,
+                                      width: 2,
+                                    ),
+                                  ),
+                                ),
                         ),
                       ],
                     ),
@@ -1398,6 +1577,17 @@ class _WorkerCard extends StatelessWidget {
                                   : AgapColors.textMuted,
                             ),
                           ),
+                          if (w.availabilityHighlight) ...[
+                            const SizedBox(height: 2),
+                            Text(
+                              'Responds quickly · visible to nearby employers',
+                              style: GoogleFonts.inter(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                                color: AgapColors.textMuted.withValues(alpha: 0.9),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -1457,6 +1647,52 @@ class _WorkerCard extends StatelessWidget {
                           ),
                         ),
                       ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: onMessage,
+                        icon: const Icon(
+                          Icons.chat_bubble_outline_rounded,
+                          size: 18,
+                        ),
+                        label: Text(
+                          'Message',
+                          style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AgapColors.businessGreenDeep,
+                          side: BorderSide(
+                            color: AgapColors.businessGreen.withValues(
+                              alpha: 0.45,
+                            ),
+                          ),
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: FilledButton.tonal(
+                        onPressed: () => _showWorkerDetailSheet(
+                          context,
+                          w,
+                          ratings: ratings,
+                        ),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AgapColors.businessMint,
+                          foregroundColor: AgapColors.businessGreenDeep,
+                          padding: const EdgeInsets.symmetric(vertical: 10),
+                        ),
+                        child: Text(
+                          'View profile',
+                          style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+                        ),
+                      ),
+                    ),
                   ],
                 ),
                 const SizedBox(height: 12),

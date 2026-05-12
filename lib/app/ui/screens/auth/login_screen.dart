@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
@@ -26,7 +27,8 @@ class LoginScreen extends StatefulWidget {
   State<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends State<LoginScreen>
+    with SingleTickerProviderStateMixin {
   final _email = TextEditingController();
   final _password = TextEditingController();
   final _passwordFocus = FocusNode();
@@ -35,8 +37,43 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _emailError;
   String? _passwordError;
 
+  late AnimationController _intro;
+  late Animation<double> _heroFade;
+  late Animation<double> _heroScale;
+  late Animation<double> _copyFade;
+  late Animation<double> _formFade;
+
+  @override
+  void initState() {
+    super.initState();
+    _intro = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    );
+    _heroFade = CurvedAnimation(
+      parent: _intro,
+      curve: const Interval(0.0, 0.4, curve: Curves.easeOutCubic),
+    );
+    _heroScale = Tween<double>(begin: 0.86, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _intro,
+        curve: const Interval(0.0, 0.5, curve: Curves.easeOutBack),
+      ),
+    );
+    _copyFade = CurvedAnimation(
+      parent: _intro,
+      curve: const Interval(0.12, 0.55, curve: Curves.easeOut),
+    );
+    _formFade = CurvedAnimation(
+      parent: _intro,
+      curve: const Interval(0.22, 1.0, curve: Curves.easeOutCubic),
+    );
+    _intro.forward();
+  }
+
   @override
   void dispose() {
+    _intro.dispose();
     _email.dispose();
     _password.dispose();
     _passwordFocus.dispose();
@@ -244,14 +281,28 @@ class _LoginScreenState extends State<LoginScreen> {
           Container(
             width: double.infinity,
             height: double.infinity,
-            decoration: const BoxDecoration(
+            decoration: BoxDecoration(
               gradient: LinearGradient(
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
                 colors: [
                   AgapColors.loginBackdropTop,
+                  Color.lerp(
+                        AgapColors.loginHeroSkyLight,
+                        AgapColors.businessMint,
+                        0.35,
+                      ) ??
+                      AgapColors.loginBackdropTop,
                   AgapColors.loginBackdropBottom,
                 ],
+                stops: const [0.0, 0.45, 1.0],
+              ),
+            ),
+          ),
+          Positioned.fill(
+            child: IgnorePointer(
+              child: CustomPaint(
+                painter: _LoginMarketplacePatternPainter(),
               ),
             ),
           ),
@@ -260,7 +311,15 @@ class _LoginScreenState extends State<LoginScreen> {
             right: -40,
             child: _GlowOrb(
               diameter: 200,
-              color: AgapColors.brandWordmarkBlue.withValues(alpha: 0.09),
+              color: AgapColors.brandWordmarkBlue.withValues(alpha: 0.1),
+            ),
+          ),
+          Positioned(
+            top: 120,
+            left: -30,
+            child: _GlowOrb(
+              diameter: 140,
+              color: AgapColors.urgentBadge.withValues(alpha: 0.12),
             ),
           ),
           Positioned(
@@ -268,166 +327,320 @@ class _LoginScreenState extends State<LoginScreen> {
             left: -50,
             child: _GlowOrb(
               diameter: 240,
-              color: AgapColors.loginHeroSky.withValues(alpha: 0.45),
+              color: AgapColors.loginHeroSky.withValues(alpha: 0.42),
+            ),
+          ),
+          Positioned(
+            bottom: 200,
+            right: -20,
+            child: _GlowOrb(
+              diameter: 120,
+              color: AgapColors.businessGreen.withValues(alpha: 0.07),
             ),
           ),
           SafeArea(
             child: SingleChildScrollView(
-              padding: EdgeInsets.fromLTRB(24, 20, 24, 28 + bottomInset),
+              padding: EdgeInsets.fromLTRB(24, 16, 24, 28 + bottomInset),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  const SizedBox(height: 8),
-                  Center(child: _LogoLockBadge()),
-                  const SizedBox(height: 28),
-                  Text(
-                    'Welcome to AgapShift',
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.inter(
-                      fontSize: 30,
-                      fontWeight: FontWeight.w800,
-                      color: AgapColors.brandNavySuit,
-                      letterSpacing: -0.8,
-                      height: 1.1,
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Sign in to continue',
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.inter(
-                      fontSize: 15,
-                      fontWeight: FontWeight.w600,
-                      color: AgapColors.brandWordmarkBlue.withValues(alpha: 0.72),
-                      height: 1.4,
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-                  Container(
-                    padding: const EdgeInsets.fromLTRB(22, 26, 22, 26),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(28),
-                      boxShadow: [
-                        BoxShadow(
-                          color: AgapColors.brandWordmarkBlue.withValues(alpha: 0.08),
-                          blurRadius: 32,
-                          offset: const Offset(0, 14),
+                  const SizedBox(height: 4),
+                  FadeTransition(
+                    opacity: _heroFade,
+                    child: ScaleTransition(
+                      scale: _heroScale,
+                      child: Center(
+                        child: ConstrainedBox(
+                          constraints: const BoxConstraints(
+                            maxWidth: 280,
+                            maxHeight: 120,
+                          ),
+                          child: Image.asset(
+                            'branding/main.png',
+                            fit: BoxFit.contain,
+                            filterQuality: FilterQuality.high,
+                            semanticLabel: 'AgapShift logo',
+                          ),
                         ),
-                        BoxShadow(
-                          color: Colors.black.withValues(alpha: 0.04),
-                          blurRadius: 16,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
-                      border: Border.all(
-                        color: AgapColors.loginHeroSkyLight.withValues(alpha: 0.6),
                       ),
                     ),
+                  ),
+                  const SizedBox(height: 24),
+                  FadeTransition(
+                    opacity: _copyFade,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        _Label('Email or Username'),
-                        _Field(
-                          controller: _email,
-                          hint: 'you@example.com',
-                          keyboardType: TextInputType.emailAddress,
-                          autofillHints: const [AutofillHints.email, AutofillHints.username],
-                          errorText: _emailError,
-                          onChanged: (_) => setState(() {
-                            _emailError = null;
-                            _passwordError = null;
-                          }),
-                        ),
-                        const SizedBox(height: 18),
-                        _Label('Password'),
-                        _Field(
-                          controller: _password,
-                          focusNode: _passwordFocus,
-                          hint: 'Enter your password',
-                          obscureText: !_passwordVisible,
-                          autofillHints: const [AutofillHints.password],
-                          errorText: _passwordError,
-                          suffix: IconButton(
-                            style: IconButton.styleFrom(
-                              foregroundColor: const Color(0xFF94A3B8),
-                            ),
-                            icon: Icon(
-                              _passwordVisible
-                                  ? Icons.visibility_rounded
-                                  : Icons.visibility_off_rounded,
-                              size: 22,
-                            ),
-                            onPressed: () => setState(() => _passwordVisible = !_passwordVisible),
-                          ),
-                          onChanged: (_) => setState(() => _passwordError = null),
-                          onSubmitted: (_) => _onSubmit(),
-                        ),
-                        const SizedBox(height: 6),
-                        Align(
-                          alignment: Alignment.centerRight,
-                          child: TextButton(
-                            onPressed: () {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  behavior: SnackBarBehavior.floating,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                  ),
-                                  content: Text(
-                                    'Password recovery coming soon.',
-                                    style: GoogleFonts.inter(fontWeight: FontWeight.w600),
-                                  ),
-                                ),
-                              );
-                            },
-                            child: Text(
-                              'Forgot password?',
-                              style: GoogleFonts.inter(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w800,
-                                color: AgapColors.brandWordmarkBlue,
-                              ),
-                            ),
+                        Text(
+                          'Welcome to AgapShift',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.inter(
+                            fontSize: 26,
+                            fontWeight: FontWeight.w800,
+                            color: AgapColors.brandNavySuit,
+                            letterSpacing: -0.6,
+                            height: 1.12,
                           ),
                         ),
                         const SizedBox(height: 8),
-                        SizedBox(
-                          width: double.infinity,
-                          height: 54,
-                          child: _GradientCta(
-                            label: 'Sign In',
-                            busy: _submitting,
-                            onPressed: _submitting ? null : _onSubmit,
+                        Text(
+                          'Find shifts. Hire faster. Work smarter.',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.inter(
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: AgapColors.brandWordmarkBlue.withValues(alpha: 0.82),
+                            height: 1.35,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'For workers & employers · Trusted marketplace',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.inter(
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            color: const Color(0xFF64748B),
+                            height: 1.35,
+                          ),
+                        ),
+                        const SizedBox(height: 14),
+                        _TrustStrip(),
+                        const SizedBox(height: 14),
+                        _BenefitChipsRow(),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 22),
+                  FadeTransition(
+                    opacity: _formFade,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.fromLTRB(22, 24, 22, 24),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(28),
+                            boxShadow: [
+                              BoxShadow(
+                                color: AgapColors.brandWordmarkBlue
+                                    .withValues(alpha: 0.1),
+                                blurRadius: 40,
+                                offset: const Offset(0, 18),
+                              ),
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.05),
+                                blurRadius: 24,
+                                offset: const Offset(0, 8),
+                              ),
+                              BoxShadow(
+                                color: AgapColors.businessGreen
+                                    .withValues(alpha: 0.04),
+                                blurRadius: 28,
+                                offset: const Offset(0, 14),
+                              ),
+                            ],
+                            border: Border.all(
+                              color: AgapColors.loginHeroSkyLight
+                                  .withValues(alpha: 0.75),
+                            ),
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _Label('Email or Username'),
+                              _AuthField(
+                                controller: _email,
+                                hint: 'you@example.com',
+                                keyboardType: TextInputType.emailAddress,
+                                autofillHints: const [
+                                  AutofillHints.email,
+                                  AutofillHints.username,
+                                ],
+                                errorText: _emailError,
+                                onChanged: (_) => setState(() {
+                                  _emailError = null;
+                                  _passwordError = null;
+                                }),
+                              ),
+                              const SizedBox(height: 18),
+                              _Label('Password'),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  _AuthField(
+                                    controller: _password,
+                                    focusNode: _passwordFocus,
+                                    hint: 'Enter your password',
+                                    obscureText: !_passwordVisible,
+                                    autofillHints: const [
+                                      AutofillHints.password,
+                                    ],
+                                    errorText: _passwordError,
+                                    suffix: IconButton(
+                                      style: IconButton.styleFrom(
+                                        foregroundColor:
+                                            const Color(0xFF94A3B8),
+                                      ),
+                                      icon: Icon(
+                                        _passwordVisible
+                                            ? Icons.visibility_rounded
+                                            : Icons.visibility_off_rounded,
+                                        size: 22,
+                                      ),
+                                      onPressed: () => setState(
+                                        () => _passwordVisible =
+                                            !_passwordVisible,
+                                      ),
+                                    ),
+                                    onChanged: (_) => setState(
+                                      () => _passwordError = null,
+                                    ),
+                                    onSubmitted: (_) => _onSubmit(),
+                                  ),
+                                  Align(
+                                    alignment: Alignment.centerRight,
+                                    child: TextButton(
+                                      style: TextButton.styleFrom(
+                                        padding: const EdgeInsets.only(
+                                          top: 2,
+                                          bottom: 0,
+                                        ),
+                                        minimumSize: Size.zero,
+                                        tapTargetSize:
+                                            MaterialTapTargetSize.shrinkWrap,
+                                      ),
+                                      onPressed: () {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          SnackBar(
+                                            behavior:
+                                                SnackBarBehavior.floating,
+                                            shape: RoundedRectangleBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(14),
+                                            ),
+                                            content: Text(
+                                              'Password recovery coming soon.',
+                                              style: GoogleFonts.inter(
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                            ),
+                                          ),
+                                        );
+                                      },
+                                      child: Text(
+                                        'Forgot password?',
+                                        style: GoogleFonts.inter(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w700,
+                                          color: AgapColors.brandWordmarkBlue,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 6),
+                              SizedBox(
+                                width: double.infinity,
+                                height: 54,
+                                child: _GradientCta(
+                                  label: 'Sign In',
+                                  busy: _submitting,
+                                  onPressed:
+                                      _submitting ? null : _onSubmit,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 20),
+                        Center(
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 10,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.88),
+                              borderRadius: BorderRadius.circular(22),
+                              border: Border.all(
+                                color: AgapColors.brandWordmarkBlue
+                                    .withValues(alpha: 0.18),
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AgapColors.brandWordmarkBlue
+                                      .withValues(alpha: 0.08),
+                                  blurRadius: 16,
+                                  offset: const Offset(0, 6),
+                                ),
+                              ],
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  "Don't have an account?",
+                                  style: GoogleFonts.inter(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: const Color(0xFF64748B),
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Material(
+                                  color: Colors.transparent,
+                                  child: InkWell(
+                                    onTap: _submitting
+                                        ? null
+                                        : () => widget.onTapSignUp(),
+                                    borderRadius: BorderRadius.circular(14),
+                                    child: Ink(
+                                      decoration: BoxDecoration(
+                                        gradient: LinearGradient(
+                                          colors: [
+                                            AgapColors.loginHeroSky,
+                                            Color.lerp(
+                                                  AgapColors.loginHeroSky,
+                                                  AgapColors.businessMint,
+                                                  0.5,
+                                                ) ??
+                                                AgapColors.loginHeroSky,
+                                          ],
+                                        ),
+                                        borderRadius: BorderRadius.circular(14),
+                                        border: Border.all(
+                                          color: AgapColors.brandWordmarkBlue
+                                              .withValues(alpha: 0.35),
+                                        ),
+                                      ),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                          horizontal: 18,
+                                          vertical: 10,
+                                        ),
+                                        child: Text(
+                                          'Create account',
+                                          style: GoogleFonts.inter(
+                                            fontSize: 13,
+                                            fontWeight: FontWeight.w800,
+                                            color:
+                                                AgapColors.brandWordmarkBlue,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ),
                       ],
                     ),
-                  ),
-                  const SizedBox(height: 28),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text(
-                        "Don't have an account?",
-                        style: GoogleFonts.inter(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: const Color(0xFF64748B),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: _submitting ? null : () => widget.onTapSignUp(),
-                        child: Text(
-                          'Sign Up',
-                          style: GoogleFonts.inter(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w900,
-                            color: AgapColors.brandWordmarkBlue,
-                          ),
-                        ),
-                      ),
-                    ],
                   ),
                 ],
               ),
@@ -439,47 +652,119 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 }
 
-class _LogoLockBadge extends StatelessWidget {
+class _TrustStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 92,
-      height: 92,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(26),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            AgapColors.loginHeroSkyLight,
-            AgapColors.loginHeroSky,
-          ],
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: AgapColors.brandWordmarkBlue.withValues(alpha: 0.22),
-            blurRadius: 24,
-            offset: const Offset(0, 10),
-          ),
-          BoxShadow(
-            color: Colors.white.withValues(alpha: 0.85),
-            blurRadius: 0,
-            spreadRadius: 1,
-            offset: const Offset(0, 1),
-          ),
-        ],
+        color: Colors.white.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: Colors.white.withValues(alpha: 0.85),
-          width: 1.5,
+          color: AgapColors.brandWordmarkBlue.withValues(alpha: 0.12),
         ),
       ),
-      child: Icon(
-        Icons.login_rounded,
-        color: AgapColors.brandWordmarkBlue,
-        size: 42,
+      child: Row(
+        children: [
+          Icon(
+            Icons.verified_user_outlined,
+            size: 20,
+            color: AgapColors.brandWordmarkBlue.withValues(alpha: 0.85),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Secure hiring · Verified accounts · Built for real shifts',
+              style: GoogleFonts.inter(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                height: 1.35,
+                color: const Color(0xFF475569),
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }
+}
+
+class _BenefitChipsRow extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    Widget chip(String text) {
+      return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.check_circle_rounded,
+            size: 15,
+            color: AgapColors.businessGreenDeep,
+          ),
+          const SizedBox(width: 5),
+          Text(
+            text,
+            style: GoogleFonts.inter(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              color: const Color(0xFF475569),
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: 12,
+      runSpacing: 8,
+      children: [
+        chip('Flexible shifts'),
+        chip('Fast hiring'),
+        chip('Fair pay tools'),
+      ],
+    );
+  }
+}
+
+class _LoginMarketplacePatternPainter extends CustomPainter {
+  @override
+  void paint(Canvas canvas, Size size) {
+    final grid = Paint()
+      ..color = AgapColors.brandWordmarkBlue.withValues(alpha: 0.045)
+      ..strokeWidth = 1;
+
+    const step = 36.0;
+    for (double x = 0; x < size.width + step; x += step) {
+      canvas.drawLine(Offset(x, 0), Offset(x + size.height * 0.35, size.height), grid);
+    }
+    for (double y = 0; y < size.height + step; y += step) {
+      canvas.drawLine(Offset(0, y), Offset(size.width, y - size.width * 0.12), grid);
+    }
+
+    final dot = Paint()
+      ..color = AgapColors.businessGreen.withValues(alpha: 0.06);
+    for (var i = 0; i < 28; i++) {
+      final cx = (i * 67.0 + 12) % (size.width + 40) - 20;
+      final cy = (i * 53.0 + 31) % (size.height + 40) - 20;
+      canvas.drawCircle(Offset(cx, cy), 2.2 + (i % 3) * 0.8, dot);
+    }
+
+    final arc = Paint()
+      ..color = AgapColors.urgentText.withValues(alpha: 0.04)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1.2;
+    canvas.drawArc(
+      Rect.fromLTWH(size.width * 0.55, -40, size.width * 0.5, 120),
+      math.pi * 0.1,
+      math.pi * 0.9,
+      false,
+      arc,
+    );
+  }
+
+  @override
+  bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
 }
 
 class _GlowOrb extends StatelessWidget {
@@ -596,8 +881,8 @@ class _Label extends StatelessWidget {
   }
 }
 
-class _Field extends StatelessWidget {
-  const _Field({
+class _AuthField extends StatefulWidget {
+  const _AuthField({
     required this.controller,
     required this.hint,
     this.focusNode,
@@ -622,49 +907,119 @@ class _Field extends StatelessWidget {
   final ValueChanged<String>? onSubmitted;
 
   @override
+  State<_AuthField> createState() => _AuthFieldState();
+}
+
+class _AuthFieldState extends State<_AuthField> {
+  late FocusNode _focus;
+  var _ownFocus = false;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.focusNode != null) {
+      _focus = widget.focusNode!;
+    } else {
+      _focus = FocusNode();
+      _ownFocus = true;
+    }
+    _focus.addListener(_onFocusChange);
+  }
+
+  void _onFocusChange() => setState(() {});
+
+  @override
+  void dispose() {
+    _focus.removeListener(_onFocusChange);
+    if (_ownFocus) {
+      _focus.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      focusNode: focusNode,
-      keyboardType: keyboardType,
-      obscureText: obscureText,
-      autofillHints: autofillHints,
-      onChanged: onChanged,
-      onSubmitted: onSubmitted,
-      style: GoogleFonts.inter(
-        fontSize: 15,
-        fontWeight: FontWeight.w600,
-        color: AgapColors.brandNavySuit,
+    final hasErr = widget.errorText != null;
+    final focused = _focus.hasFocus;
+    final glow = focused && !hasErr;
+
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 200),
+      curve: Curves.easeOutCubic,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: glow
+            ? [
+                BoxShadow(
+                  color: AgapColors.brandWordmarkBlue.withValues(alpha: 0.22),
+                  blurRadius: 16,
+                  spreadRadius: 0,
+                  offset: const Offset(0, 4),
+                ),
+                BoxShadow(
+                  color: AgapColors.businessGreen.withValues(alpha: 0.08),
+                  blurRadius: 20,
+                  offset: const Offset(0, 6),
+                ),
+              ]
+            : [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.02),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2),
+                ),
+              ],
       ),
-      decoration: InputDecoration(
-        hintText: hint,
-        hintStyle: GoogleFonts.inter(
-          fontSize: 14,
-          color: const Color(0xFF94A3B8),
+      child: TextField(
+        controller: widget.controller,
+        focusNode: _focus,
+        keyboardType: widget.keyboardType,
+        obscureText: widget.obscureText,
+        autofillHints: widget.autofillHints,
+        onChanged: widget.onChanged,
+        onSubmitted: widget.onSubmitted,
+        style: GoogleFonts.inter(
+          fontSize: 15,
           fontWeight: FontWeight.w600,
+          color: AgapColors.brandNavySuit,
         ),
-        filled: true,
-        fillColor: errorText != null
-            ? const Color(0xFFFEF2F2)
-            : AgapColors.loginFieldFill,
-        suffixIcon: suffix,
-        errorText: errorText,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
-        enabledBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(color: Color(0xFFD8E4F0)),
-        ),
-        focusedBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(color: AgapColors.brandWordmarkBlue, width: 1.6),
-        ),
-        errorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(color: Color(0xFFEF4444)),
-        ),
-        focusedErrorBorder: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(16),
-          borderSide: const BorderSide(color: Color(0xFFEF4444), width: 1.6),
+        decoration: InputDecoration(
+          hintText: widget.hint,
+          hintStyle: GoogleFonts.inter(
+            fontSize: 14,
+            color: const Color(0xFF94A3B8),
+            fontWeight: FontWeight.w600,
+          ),
+          filled: true,
+          fillColor: hasErr
+              ? const Color(0xFFFEF2F2)
+              : AgapColors.loginFieldFill,
+          suffixIcon: widget.suffix,
+          errorText: widget.errorText,
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+          enabledBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(
+              color: const Color(0xFFD8E4F0),
+              width: focused ? 1.4 : 1,
+            ),
+          ),
+          focusedBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: BorderSide(
+              color: AgapColors.brandWordmarkBlue,
+              width: focused ? 2.2 : 1.8,
+            ),
+          ),
+          errorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: Color(0xFFEF4444)),
+          ),
+          focusedErrorBorder: OutlineInputBorder(
+            borderRadius: BorderRadius.circular(16),
+            borderSide: const BorderSide(color: Color(0xFFEF4444), width: 1.8),
+          ),
         ),
       ),
     );

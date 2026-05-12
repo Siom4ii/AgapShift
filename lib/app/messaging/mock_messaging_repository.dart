@@ -116,6 +116,8 @@ class MockMessagingRepository implements MessagingRepository {
           otherDisplayName: other.isEmpty ? 'Unknown' : _shortPeer(other),
           lastPreview: last?.body ?? '',
           updatedAt: c.updatedAt,
+          lastMessageSenderId: last?.senderId,
+          unreadCount: 0,
         ),
       );
     }

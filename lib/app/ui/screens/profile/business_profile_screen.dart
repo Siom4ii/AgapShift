@@ -62,6 +62,8 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
   BusinessIdentityDisplay? _identity;
   int _totalHired = 0;
   int _totalPaidCentavos = 0;
+  int _activeOpenGigs = 0;
+  int _hireFillPct = 0;
   List<_RecentHireVm> _recentHires = const [];
 
   @override
@@ -96,6 +98,18 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
         .toList()
       ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
+    final activeOpen = posted
+        .where(
+          (g) =>
+              g.status == GigStatus.open ||
+              g.status == GigStatus.filled ||
+              g.status == GigStatus.ongoing,
+        )
+        .length;
+    final fillPct = posted.isEmpty
+        ? 0
+        : ((hiredApps.length / posted.length) * 100).round().clamp(0, 100);
+
     var paidCentavos = 0;
     if (widget.payments != null) {
       final ledger = await widget.payments!.listLedger(userId);
@@ -110,8 +124,14 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
     final nameByWorker =
         await fetchWorkerDisplayNamesById(hiredSlice.map((a) => a.workerId).toSet());
 
+    final workerHireCounts = <String, int>{};
+    for (final a in hiredApps) {
+      workerHireCounts[a.workerId] = (workerHireCounts[a.workerId] ?? 0) + 1;
+    }
+
     final recentHires = <_RecentHireVm>[];
-    for (final a in hiredSlice) {
+    for (var idx = 0; idx < hiredSlice.length; idx++) {
+      final a = hiredSlice[idx];
       final g = gigById[a.gigId];
       final wAvg = await widget.ratings.averageForUser(a.workerId);
       final stars = wAvg > 0 ? wAvg.round().clamp(1, 5) : 0;
@@ -120,6 +140,15 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
       final displayName = (resolved != null && resolved.isNotEmpty)
           ? resolved
           : applicantDisplayNameFallback(a.workerId);
+      final hireCount = workerHireCounts[a.workerId] ?? 0;
+      String? relationshipTag;
+      if (hireCount >= 3) {
+        relationshipTag = 'Favorite worker';
+      } else if (hireCount >= 2) {
+        relationshipTag = 'Rehired';
+      } else if (idx == 0) {
+        relationshipTag = 'Active worker';
+      }
       recentHires.add(
         _RecentHireVm(
           workerId: a.workerId,
@@ -128,6 +157,7 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
           when: _relativeWhen(a.createdAt.toLocal()),
           amount: '₱${_formatThousandsInt(payPesos)}',
           stars: stars,
+          relationshipTag: relationshipTag,
         ),
       );
     }
@@ -159,6 +189,8 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
       _identity = identity;
       _totalHired = hiredApps.length;
       _totalPaidCentavos = paidCentavos;
+      _activeOpenGigs = activeOpen;
+      _hireFillPct = fillPct;
       _recentHires = recentHires;
     });
   }
@@ -213,14 +245,21 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
           RefreshIndicator(
             onRefresh: _load,
             child: ListView(
-              padding: EdgeInsets.fromLTRB(
-                20,
-                widget.embedded ? 12 : 8,
-                20,
-                widget.embedded && !widget.showFollowFab
-                    ? bottomInset + 28
-                    : bottomInset,
-              ),
+              padding: widget.embedded && !widget.showFollowFab
+                  ? EdgeInsets.fromLTRB(
+                      0,
+                      0,
+                      0,
+                      widget.embedded && !widget.showFollowFab
+                          ? bottomInset + 28
+                          : bottomInset,
+                    )
+                  : EdgeInsets.fromLTRB(
+                      20,
+                      widget.embedded ? 12 : 8,
+                      20,
+                      bottomInset,
+                    ),
               children: [
                 if (widget.embedded && !widget.showFollowFab) ...[
                   _BusinessProfileOwnerTab(
@@ -234,6 +273,8 @@ class _BusinessProfileScreenState extends State<BusinessProfileScreen> {
                     totalPaidLabel: widget.payments == null
                         ? '—'
                         : _paidCompact(_totalPaidCentavos),
+                    activeOpenGigs: _activeOpenGigs,
+                    hireFillPct: _hireFillPct,
                     recentHires: _recentHires,
                     session: widget.session,
                     onLogout: widget.onLogout,
@@ -489,6 +530,7 @@ class _RecentHireVm {
     required this.when,
     required this.amount,
     required this.stars,
+    this.relationshipTag,
   });
 
   final String workerId;
@@ -497,6 +539,8 @@ class _RecentHireVm {
   final String when;
   final String amount;
   final int stars;
+  /// e.g. Active worker, Rehired, Trusted regular (proxy for “favorite”).
+  final String? relationshipTag;
 }
 
 String _formatThousandsInt(int n) {
@@ -520,6 +564,8 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
     required this.verified,
     required this.workersHired,
     required this.totalPaidLabel,
+    required this.activeOpenGigs,
+    required this.hireFillPct,
     required this.recentHires,
     required this.session,
     required this.onLogout,
@@ -538,6 +584,8 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
   final bool verified;
   final int workersHired;
   final String totalPaidLabel;
+  final int activeOpenGigs;
+  final int hireFillPct;
   final List<_RecentHireVm> recentHires;
   final SessionController session;
   final Future<void> Function()? onLogout;
@@ -546,16 +594,6 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
   final VoidCallback? onOpenInbox;
   final int notificationUnreadCount;
   final int inboxUnreadCount;
-
-  static final _headerGradient = LinearGradient(
-    colors: [
-      AgapColors.businessGreenDeep,
-      AgapColors.businessGreen,
-      AgapColors.businessGreenLight,
-    ],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-  );
 
   String get _initials {
     final parts = bizName
@@ -574,600 +612,783 @@ class _BusinessProfileOwnerTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        DecoratedBox(
-          decoration: BoxDecoration(gradient: _headerGradient),
-          child: SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+    final topInset = MediaQuery.paddingOf(context).top;
+    final hasRating = ratingShow > 0;
+    final ratingText = hasRating
+        ? '${ratingShow.toStringAsFixed(1)} ($workersHired hires)'
+        : 'No ratings yet ($workersHired hires)';
+
+    final showPaid = totalPaidLabel != '₱0' && totalPaidLabel != '—';
+
+    final insightMessage = hireFillPct >= 35 && verified
+        ? '$hireFillPct% of your listings led to a hire — strong employer signal on AgapShift.'
+        : 'Tip: reply to applicants within a few hours to build a "fast responder" reputation.';
+
+    final highlightHires = workersHired > 0;
+    final highlightRating = hasRating && ratingShow >= 4.5;
+    final highlightListings = !highlightRating && !highlightHires && activeOpenGigs > 0;
+
+    return ColoredBox(
+      color: const Color(0xFFF3F4F6),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Stack(
+            clipBehavior: Clip.none,
+            children: [
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                      colors: [
+                        AgapColors.businessGreenDeep,
+                        AgapColors.businessGreen,
+                        AgapColors.businessGreenLight.withValues(alpha: 0.6),
+                        const Color(0xFFE8EDF5),
+                        const Color(0xFFF3F4F6),
+                      ],
+                      stops: const [0.0, 0.16, 0.42, 0.72, 1.0],
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                right: -36,
+                top: topInset + 8,
+                child: IgnorePointer(
+                  child: Container(
+                    width: 176,
+                    height: 176,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withValues(alpha: 0.1),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: -52,
+                top: topInset + 120,
+                child: IgnorePointer(
+                  child: Container(
+                    width: 140,
+                    height: 140,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      color: Colors.white.withValues(alpha: 0.07),
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                right: 64,
+                top: topInset + 72,
+                child: IgnorePointer(
+                  child: Transform.rotate(
+                    angle: 0.35,
+                    child: Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(14),
+                        color: Colors.white.withValues(alpha: 0.06),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          'Business Profile',
+                  SizedBox(height: topInset + 12),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(20, 0, 12, 0),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Text(
+                          'My Profile',
                           style: GoogleFonts.inter(
                             fontSize: 22,
                             fontWeight: FontWeight.w800,
                             color: Colors.white,
                           ),
                         ),
+                        const Spacer(),
+                        if (onOpenInbox != null)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: Material(
+                              color: Colors.white.withValues(alpha: 0.2),
+                              shape: const CircleBorder(),
+                              clipBehavior: Clip.antiAlias,
+                              child: IconButton(
+                                tooltip: 'Messages',
+                                icon: Badge(
+                                  isLabelVisible: inboxUnreadCount > 0,
+                                  label: Text(
+                                    inboxUnreadCount > 99
+                                        ? '99+'
+                                        : '$inboxUnreadCount',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  backgroundColor: Colors.red.shade600,
+                                  child: const Icon(
+                                    Icons.chat_bubble_outline_rounded,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                onPressed: onOpenInbox,
+                              ),
+                            ),
+                          ),
+                        if (onOpenNotifications != null)
+                          Padding(
+                            padding: const EdgeInsets.only(right: 4),
+                            child: Material(
+                              color: Colors.white.withValues(alpha: 0.2),
+                              shape: const CircleBorder(),
+                              clipBehavior: Clip.antiAlias,
+                              child: IconButton(
+                                tooltip: 'Notifications',
+                                icon: Badge(
+                                  isLabelVisible: notificationUnreadCount > 0,
+                                  label: Text(
+                                    notificationUnreadCount > 99
+                                        ? '99+'
+                                        : '$notificationUnreadCount',
+                                    style: GoogleFonts.inter(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w800,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                  backgroundColor: Colors.red.shade600,
+                                  child: const Icon(
+                                    Icons.notifications_outlined,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                                onPressed: onOpenNotifications,
+                              ),
+                            ),
+                          ),
+                        Material(
+                          color: Colors.white.withValues(alpha: 0.2),
+                          shape: const CircleBorder(),
+                          clipBehavior: Clip.antiAlias,
+                          child: IconButton(
+                            icon: const Icon(
+                              Icons.edit_rounded,
+                              color: Colors.white,
+                            ),
+                            onPressed: () {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Edit profile (demo)'),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: _BizProfileSummaryCard(
+                      initials: _initials,
+                      name: bizName,
+                      verified: verified,
+                      tagline: tagline,
+                      hasRating: hasRating,
+                      ratingValue: ratingShow,
+                      ratingText: ratingText,
+                      addressLine: addressLine ?? '',
+                      phone: phone ?? '',
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: _PressScale(
+                            child: _BizMetricCard(
+                              iconBoxColor:
+                                  AgapColors.businessMint.withValues(alpha: 0.9),
+                              icon: Icons.groups_outlined,
+                              iconColor: AgapColors.businessGreenDeep,
+                              value: '$workersHired',
+                              valueColor: AgapColors.businessGreenDeep,
+                              label: 'Workers hired',
+                              microTag: workersHired == 0
+                                  ? 'Start hiring today'
+                                  : 'Keep growing',
+                              microTagColor: AgapColors.businessGreenDeep,
+                              emphasized: highlightHires,
+                              accentBarColor: highlightHires
+                                  ? AgapColors.businessGreen
+                                  : null,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _PressScale(
+                            child: _BizMetricCard(
+                              iconBoxColor: const Color(0xFFFFF8E1),
+                              icon: Icons.star_rounded,
+                              iconColor: const Color(0xFFFFC107),
+                              value: hasRating ? ratingShow.toStringAsFixed(1) : '—',
+                              valueColor: hasRating
+                                  ? const Color(0xFFE65100)
+                                  : AgapColors.textMuted,
+                              label: 'Rating',
+                              microTag: hasRating
+                                  ? (ratingShow >= 4.5
+                                      ? 'Top employer'
+                                      : (ratingShow >= 4.0
+                                          ? 'Excellent'
+                                          : 'Keep it up'))
+                                  : 'Earn stars',
+                              microTagColor: const Color(0xFFE65100),
+                              emphasized: highlightRating,
+                              accentBarColor: highlightRating
+                                  ? const Color(0xFFFFB300)
+                                  : null,
+                              rewardGlow: highlightRating,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: _PressScale(
+                            child: _BizMetricCard(
+                              iconBoxColor: const Color(0xFFE8EFFF),
+                              icon: showPaid
+                                  ? Icons.payments_outlined
+                                  : Icons.work_outline,
+                              iconColor: const Color(0xFF2563EB),
+                              value: showPaid ? totalPaidLabel : '$activeOpenGigs',
+                              valueColor: AgapColors.businessGreenDeep,
+                              label: showPaid ? 'Total paid' : 'Open listings',
+                              microTag: showPaid
+                                  ? 'All-time'
+                                  : (activeOpenGigs == 0
+                                      ? 'Post your first'
+                                      : 'Live now'),
+                              microTagColor: const Color(0xFF2563EB),
+                              emphasized: highlightListings,
+                              accentBarColor: highlightListings
+                                  ? const Color(0xFF2563EB)
+                                  : null,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (!verified)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: VerificationStatusCard(session: session),
+                    ),
+                  if (hireFillPct > 0 || verified) ...[
+                    const SizedBox(height: 12),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: _InsightTipCard(message: insightMessage),
+                    ),
+                  ],
+                  const SizedBox(height: 18),
+                ],
+              ),
+            ],
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 18),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _BizSectionCard(
+                  title: 'Recent Hires',
+                  icon: Icons.history_rounded,
+                  child: recentHires.isEmpty
+                      ? Text(
+                          'Completed hires will appear here after you hire a worker.',
+                          style: GoogleFonts.inter(
+                            fontSize: 14,
+                            height: 1.45,
+                            color: AgapColors.textMuted,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        )
+                      : _RecentHiresExpandable(recentHires: recentHires),
+                ),
+                const SizedBox(height: 14),
+                _BizSectionCard(
+                  title: 'Shortcuts',
+                  icon: Icons.apps_rounded,
+                  child: Column(
+                    children: [
+                      _ShortcutProfileTile(
+                        icon: Icons.workspace_premium_outlined,
+                        title: 'Employer subscription',
+                        onTap: () {
+                          Navigator.of(context).push<void>(
+                            MaterialPageRoute<void>(
+                              builder: (_) => EmployerSubscriptionScreen(
+                                session: session,
+                              ),
+                            ),
+                          );
+                        },
                       ),
-                      if (onOpenInbox != null)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 4),
-                          child: Material(
-                            color: Colors.white.withValues(alpha: 0.2),
-                            shape: const CircleBorder(),
-                            clipBehavior: Clip.antiAlias,
-                            child: IconButton(
-                              icon: Badge(
-                                isLabelVisible: inboxUnreadCount > 0,
-                                label: Text(
-                                  inboxUnreadCount > 99 ? '99+' : '$inboxUnreadCount',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w800,
-                                    color: Colors.white,
+                      const Divider(height: 1),
+                      _ShortcutProfileTile(
+                        icon: Icons.history_rounded,
+                        title: 'Hiring History',
+                        onTap: onOpenHiringHistory ??
+                            () => ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('Hiring history'),
                                   ),
                                 ),
-                                backgroundColor: Colors.red.shade600,
-                                child: const Icon(
-                                  Icons.chat_bubble_outline_rounded,
-                                  color: Colors.white,
-                                  size: 22,
-                                ),
-                              ),
-                              onPressed: onOpenInbox,
-                              tooltip: 'Messages',
-                            ),
-                          ),
-                        ),
-                      if (onOpenNotifications != null)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 4),
-                          child: Material(
-                            color: Colors.white.withValues(alpha: 0.2),
-                            shape: const CircleBorder(),
-                            clipBehavior: Clip.antiAlias,
-                            child: IconButton(
-                              icon: Badge(
-                                isLabelVisible: notificationUnreadCount > 0,
-                                label: Text(
-                                  notificationUnreadCount > 99
-                                      ? '99+'
-                                      : '$notificationUnreadCount',
-                                  style: GoogleFonts.inter(
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w800,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                                backgroundColor: Colors.red.shade600,
-                                child: const Icon(
-                                  Icons.notifications_outlined,
-                                  color: Colors.white,
-                                  size: 22,
-                                ),
-                              ),
-                              onPressed: onOpenNotifications,
-                              tooltip: 'Notifications',
-                            ),
-                          ),
-                        ),
-                      Material(
-                        color: Colors.white.withValues(alpha: 0.2),
-                        shape: const CircleBorder(),
-                        child: IconButton(
-                          icon: const Icon(
-                            Icons.edit_outlined,
-                            color: Colors.white,
-                          ),
-                          onPressed: () {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Edit profile (demo)'),
-                              ),
-                            );
-                          },
-                          tooltip: 'Edit',
+                      ),
+                      const Divider(height: 1),
+                      _ShortcutProfileTile(
+                        icon: Icons.notifications_outlined,
+                        title: 'Notifications',
+                        onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(content: Text('Notifications')),
                         ),
                       ),
                     ],
                   ),
-                  const SizedBox(height: 14),
-                  Material(
-                    elevation: 8,
-                    shadowColor: Colors.black.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(16),
-                    color: Colors.white,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                ),
+                const SizedBox(height: 14),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.red.shade700,
+                    side: BorderSide(color: Colors.red.shade300),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                  ),
+                  onPressed: onLogout == null
+                      ? null
+                      : () async {
+                          await onLogout!();
+                        },
+                  icon: Icon(Icons.logout_rounded, color: Colors.red.shade700),
+                  label: Text(
+                    'Log Out',
+                    style: GoogleFonts.inter(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PressScale extends StatefulWidget {
+  const _PressScale({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_PressScale> createState() => _PressScaleState();
+}
+
+class _PressScaleState extends State<_PressScale> {
+  double _scale = 1;
+
+  @override
+  Widget build(BuildContext context) {
+    return Listener(
+      onPointerDown: (_) => setState(() => _scale = 0.97),
+      onPointerUp: (_) => setState(() => _scale = 1),
+      onPointerCancel: (_) => setState(() => _scale = 1),
+      child: AnimatedScale(
+        scale: _scale,
+        duration: const Duration(milliseconds: 110),
+        curve: Curves.easeOutCubic,
+        child: widget.child,
+      ),
+    );
+  }
+}
+
+class _BizProfileSummaryCard extends StatelessWidget {
+  const _BizProfileSummaryCard({
+    required this.initials,
+    required this.name,
+    required this.verified,
+    required this.tagline,
+    required this.hasRating,
+    required this.ratingValue,
+    required this.ratingText,
+    required this.addressLine,
+    required this.phone,
+  });
+
+  final String initials;
+  final String name;
+  final bool verified;
+  final String tagline;
+  final bool hasRating;
+  final double ratingValue;
+  final String ratingText;
+  final String addressLine;
+  final String phone;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 6,
+      shadowColor: Colors.black26,
+      borderRadius: BorderRadius.circular(16),
+      color: Colors.white,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: AgapColors.businessGreenDeep,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                initials,
+                style: GoogleFonts.inter(
+                  fontSize: 22,
+                  fontWeight: FontWeight.w800,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          name,
+                          style: GoogleFonts.inter(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w800,
+                            color: AgapColors.businessGreenDeep,
+                            height: 1.2,
+                          ),
+                        ),
+                      ),
+                      if (verified) ...[
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AgapColors.businessGreen,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
                             children: [
-                              Container(
-                                width: 56,
-                                height: 56,
-                                decoration: BoxDecoration(
-                                  color: AgapColors.businessGreen,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                alignment: Alignment.center,
-                                child: Text(
-                                  _initials,
-                                  style: GoogleFonts.inter(
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.w800,
-                                    color: Colors.white,
-                                  ),
-                                ),
+                              const Icon(
+                                Icons.check_rounded,
+                                size: 14,
+                                color: Colors.white,
                               ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            bizName,
-                                            style: GoogleFonts.inter(
-                                              fontSize: 18,
-                                              fontWeight: FontWeight.w800,
-                                              color: const Color(0xFF111827),
-                                              height: 1.2,
-                                            ),
-                                          ),
-                                        ),
-                                        if (verified)
-                                          Padding(
-                                            padding: const EdgeInsets.only(
-                                              left: 6,
-                                            ),
-                                            child: Container(
-                                              padding:
-                                                  const EdgeInsets.symmetric(
-                                                horizontal: 8,
-                                                vertical: 4,
-                                              ),
-                                              decoration: BoxDecoration(
-                                                color: AgapColors.mintSurface,
-                                                borderRadius:
-                                                    BorderRadius.circular(20),
-                                              ),
-                                              child: Row(
-                                                mainAxisSize: MainAxisSize.min,
-                                                children: [
-                                                  Icon(
-                                                    Icons.verified_rounded,
-                                                    size: 14,
-                                                    color: AgapColors
-                                                        .businessGreen,
-                                                  ),
-                                                  const SizedBox(width: 4),
-                                                  Text(
-                                                    'Verified',
-                                                    style: GoogleFonts.inter(
-                                                      fontSize: 11,
-                                                      fontWeight:
-                                                          FontWeight.w800,
-                                                      color: AgapColors
-                                                          .primaryBright,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 6),
-                                    Text(
-                                      tagline,
-                                      style: GoogleFonts.inter(
-                                        fontSize: 13,
-                                        color: AgapColors.textMuted,
-                                        fontWeight: FontWeight.w600,
-                                      ),
-                                    ),
-                                    const SizedBox(height: 10),
-                                    Row(
-                                      children: [
-                                        ...List.generate(
-                                          5,
-                                          (i) => Padding(
-                                            padding: const EdgeInsets.only(
-                                              right: 2,
-                                            ),
-                                            child: Icon(
-                                              Icons.star_rounded,
-                                              size: 20,
-                                              color: i <
-                                                          math.min(
-                                                            5,
-                                                            ratingShow.round(),
-                                                          ) &&
-                                                      ratingShow > 0
-                                                  ? const Color(0xFFEAB308)
-                                                  : AgapColors.borderSubtle,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        Text(
-                                          ratingShow > 0
-                                              ? ratingShow.toStringAsFixed(1)
-                                              : '—',
-                                          style: GoogleFonts.inter(
-                                            fontWeight: FontWeight.w800,
-                                            fontSize: 16,
-                                            color: const Color(0xFFEAB308),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                  ],
+                              const SizedBox(width: 4),
+                              Text(
+                                'Verified',
+                                style: GoogleFonts.inter(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white,
                                 ),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 12),
-                          if (addressLine != null &&
-                              addressLine!.trim().isNotEmpty) ...[
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Icon(
-                                  Icons.place_outlined,
-                                  size: 20,
-                                  color: AgapColors.textMuted,
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    addressLine!,
-                                    style: GoogleFonts.inter(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                      color: const Color(0xFF374151),
-                                      height: 1.35,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-                          ],
-                          if (phone != null && phone!.trim().isNotEmpty) ...[
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.phone_outlined,
-                                  size: 20,
-                                  color: const Color(0xFFDB2777),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: Text(
-                                    phone!,
-                                    style: GoogleFonts.inter(
-                                      fontSize: 13,
-                                      fontWeight: FontWeight.w600,
-                                      color: const Color(0xFF374151),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                          if ((addressLine == null ||
-                                  addressLine!.trim().isEmpty) &&
-                              (phone == null || phone!.trim().isEmpty))
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.place_outlined,
-                                  size: 20,
-                                  color: AgapColors.textMuted,
-                                ),
-                                const SizedBox(width: 16),
-                                Icon(
-                                  Icons.phone_outlined,
-                                  size: 20,
-                                  color: const Color(0xFFDB2777),
-                                ),
-                              ],
-                            ),
-                          if (verified) ...[
-                            Padding(
-                              padding: const EdgeInsets.only(top: 14),
-                              child: Divider(
-                                height: 1,
-                                color: AgapColors.borderSubtle,
-                              ),
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.only(top: 10),
-                              child: Row(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Icon(
-                                    Icons.verified_rounded,
-                                    size: 20,
-                                    color: AgapColors.businessGreen,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  Expanded(
-                                    child: Text(
-                                      'Account verified · Full access to AgapShift features',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w600,
-                                        color: AgapColors.businessGreen,
-                                        height: 1.35,
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    tagline,
+                    style: GoogleFonts.inter(
+                      fontSize: 12.5,
+                      height: 1.4,
+                      fontWeight: FontWeight.w600,
+                      color: AgapColors.textMuted,
                     ),
                   ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      ...List.generate(5, (i) {
+                        final filled =
+                            hasRating && i < ratingValue.round().clamp(0, 5);
+                        return Padding(
+                          padding: const EdgeInsets.only(right: 2),
+                          child: Icon(
+                            Icons.star_rounded,
+                            size: 18,
+                            color: filled
+                                ? const Color(0xFFFFC107)
+                                : const Color(0xFFE0E0E0),
+                          ),
+                        );
+                      }),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          ratingText,
+                          style: GoogleFonts.inter(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: AgapColors.textMuted,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (addressLine.trim().isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Icon(
+                          Icons.place_outlined,
+                          size: 16,
+                          color: AgapColors.textMuted,
+                        ),
+                        const SizedBox(width: 4),
+                        Expanded(
+                          child: Text(
+                            addressLine,
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AgapColors.textMuted,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                  if (phone.trim().isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Row(
+                      children: [
+                        const Icon(
+                          Icons.phone_outlined,
+                          size: 16,
+                          color: Color(0xFFDB2777),
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            phone,
+                            style: GoogleFonts.inter(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w600,
+                              color: AgapColors.textMuted,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
-          ),
+          ],
         ),
-        const SizedBox(height: 12),
-        if (!verified) ...[
-          VerificationStatusCard(session: session),
-          const SizedBox(height: 16),
-        ],
-        _UnifiedStatsStrip(
-          workersHired: workersHired,
-          ratingLabel: ratingShow > 0 ? ratingShow.toStringAsFixed(1) : '—',
-          totalPaidLabel: totalPaidLabel,
-        ),
-        const SizedBox(height: 20),
-        Text(
-          'Recent Hires',
-          style: GoogleFonts.inter(
-            fontSize: 16,
-            fontWeight: FontWeight.w800,
-            color: const Color(0xFF111827),
-          ),
-        ),
-        const SizedBox(height: 10),
-        DecoratedBox(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: AgapColors.borderSubtle),
-          ),
-          child: recentHires.isEmpty
-              ? Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Text(
-                    'No hires recorded yet. Hire applicants from your job posts.',
-                    style: GoogleFonts.inter(
-                      color: AgapColors.textMuted,
-                      fontWeight: FontWeight.w600,
-                      height: 1.4,
-                    ),
-                  ),
-                )
-              : Column(
-                  children: [
-                    for (var i = 0; i < recentHires.length; i++) ...[
-                      if (i > 0) const Divider(height: 1),
-                      _RecentHireRow(
-                        initials: applicantInitialsFromName(
-                          recentHires[i].name,
-                          recentHires[i].workerId,
-                        ),
-                        name: recentHires[i].name,
-                        role: recentHires[i].role,
-                        when: recentHires[i].when,
-                        amount: recentHires[i].amount,
-                        stars: recentHires[i].stars,
-                        dense: true,
-                      ),
-                    ],
-                  ],
-                ),
-        ),
-        const SizedBox(height: 20),
-        Text(
-          'Shortcuts',
-          style: GoogleFonts.inter(
-            fontSize: 16,
-            fontWeight: FontWeight.w800,
-            color: const Color(0xFF111827),
-          ),
-        ),
-        const SizedBox(height: 8),
-        DecoratedBox(
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: AgapColors.borderSubtle),
-          ),
-          child: Column(
-            children: [
-              _SlimProfileTile(
-                icon: Icons.workspace_premium_outlined,
-                title: 'Employer subscription',
-                onTap: () {
-                  Navigator.of(context).push<void>(
-                    MaterialPageRoute<void>(
-                      builder: (_) => EmployerSubscriptionScreen(
-                        session: session,
-                      ),
-                    ),
-                  );
-                },
-              ),
-              const Divider(height: 1),
-              _SlimProfileTile(
-                icon: Icons.history_rounded,
-                title: 'Hiring History',
-                onTap: onOpenHiringHistory ??
-                    () => ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Hiring history')),
-                        ),
-              ),
-              const Divider(height: 1),
-              _SlimProfileTile(
-                icon: Icons.notifications_outlined,
-                title: 'Notifications',
-                onTap: () => ScaffoldMessenger.of(
-                  context,
-                ).showSnackBar(const SnackBar(content: Text('Notifications'))),
-              ),
-            ],
-          ),
-        ),
-        const SizedBox(height: 20),
-        OutlinedButton.icon(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: Colors.red.shade700,
-            side: BorderSide(color: Colors.red.shade300),
-            padding: const EdgeInsets.symmetric(vertical: 14),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-            ),
-          ),
-          onPressed: onLogout == null
-              ? null
-              : () async {
-                  await onLogout!();
-                },
-          icon: Icon(Icons.logout_rounded, color: Colors.red.shade700),
-          label: Text(
-            'Log Out',
-            style: GoogleFonts.inter(fontWeight: FontWeight.w800),
-          ),
-        ),
-        const SizedBox(height: 8),
-      ],
-    );
-  }
-}
-
-/// Single bordered row instead of three separate stat cards.
-class _UnifiedStatsStrip extends StatelessWidget {
-  const _UnifiedStatsStrip({
-    required this.workersHired,
-    required this.ratingLabel,
-    required this.totalPaidLabel,
-  });
-
-  final int workersHired;
-  final String ratingLabel;
-  final String totalPaidLabel;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: AgapColors.borderSubtle),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: _StatCell(
-              icon: Icons.groups_outlined,
-              iconColor: const Color(0xFF6D28D9),
-              value: '$workersHired',
-              valueColor: AgapColors.businessGreen,
-              label: 'Workers hired',
-            ),
-          ),
-          Container(width: 1, height: 44, color: AgapColors.borderSubtle),
-          Expanded(
-            child: _StatCell(
-              icon: Icons.star_rounded,
-              iconColor: const Color(0xFFEAB308),
-              value: ratingLabel,
-              valueColor: const Color(0xFFEAB308),
-              label: 'Rating',
-            ),
-          ),
-          Container(width: 1, height: 44, color: AgapColors.borderSubtle),
-          Expanded(
-            child: _StatCell(
-              icon: Icons.payments_outlined,
-              iconColor: AgapColors.textMuted,
-              value: totalPaidLabel,
-              valueColor: const Color(0xFF111827),
-              label: 'Total paid',
-            ),
-          ),
-        ],
       ),
     );
   }
 }
 
-class _StatCell extends StatelessWidget {
-  const _StatCell({
+class _BizMetricCard extends StatelessWidget {
+  const _BizMetricCard({
+    required this.iconBoxColor,
     required this.icon,
     required this.iconColor,
     required this.value,
     required this.valueColor,
     required this.label,
+    this.microTag,
+    this.microTagColor,
+    this.emphasized = false,
+    this.accentBarColor,
+    this.rewardGlow = false,
   });
 
+  final Color iconBoxColor;
   final IconData icon;
   final Color iconColor;
   final String value;
   final Color valueColor;
   final String label;
+  final String? microTag;
+  final Color? microTagColor;
+  final bool emphasized;
+  final Color? accentBarColor;
+  final bool rewardGlow;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Column(
+    final sub = microTag?.trim();
+    final glowAmber = emphasized && rewardGlow;
+
+    final shadows = <BoxShadow>[
+      if (glowAmber) ...[
+        BoxShadow(
+          color: const Color(0xFFFFC107).withValues(alpha: 0.36),
+          blurRadius: 24,
+          offset: const Offset(0, 8),
+        ),
+        BoxShadow(
+          color: const Color(0xFFFFE082).withValues(alpha: 0.22),
+          blurRadius: 14,
+          spreadRadius: -2,
+          offset: const Offset(0, 4),
+        ),
+      ] else if (emphasized)
+        BoxShadow(
+          color: AgapColors.businessGreenDeep.withValues(alpha: 0.16),
+          blurRadius: 20,
+          offset: const Offset(0, 7),
+        )
+      else
+        BoxShadow(
+          color: Colors.black.withValues(alpha: 0.05),
+          blurRadius: 10,
+          offset: const Offset(0, 4),
+        ),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 14, 12, 14),
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: glowAmber
+              ? const Color(0xFFFFB300).withValues(alpha: 0.55)
+              : (emphasized
+                  ? AgapColors.businessGreenDeep.withValues(alpha: 0.42)
+                  : AgapColors.borderSubtle),
+          width: emphasized ? 1.5 : 1,
+        ),
+        gradient: glowAmber
+            ? const LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  Color(0xFFFFFFFF),
+                  Color(0xFFFFFBF5),
+                  Color(0xFFFFF4E0),
+                ],
+              )
+            : null,
+        color: glowAmber ? null : Colors.white,
+        boxShadow: shadows,
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: iconColor),
-          const SizedBox(height: 6),
-          Text(
-            value,
-            style: GoogleFonts.inter(
-              fontSize: 17,
-              fontWeight: FontWeight.w800,
-              color: valueColor,
+          if (accentBarColor != null)
+            Container(
+              width: 4,
+              height: 92,
+              margin: const EdgeInsets.only(right: 10, top: 1),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(4),
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    accentBarColor!,
+                    accentBarColor!.withValues(alpha: 0.55),
+                  ],
+                ),
+              ),
             ),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            textAlign: TextAlign.center,
-            style: GoogleFonts.inter(
-              fontSize: 10,
-              fontWeight: FontWeight.w600,
-              color: AgapColors.textMuted,
-              height: 1.2,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: iconBoxColor,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(icon, color: iconColor, size: 20),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  label,
+                  style: GoogleFonts.inter(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: AgapColors.textMuted,
+                    height: 1.1,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  value,
+                  style: GoogleFonts.inter(
+                    fontSize: emphasized ? 19 : 18,
+                    fontWeight: FontWeight.w800,
+                    color: valueColor,
+                    height: 1.05,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                if (sub != null && sub.isNotEmpty) ...[
+                  Text(
+                    sub,
+                    style: GoogleFonts.inter(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w800,
+                      color: microTagColor ?? AgapColors.businessGreenDeep,
+                      letterSpacing: 0.2,
+                    ),
+                  ),
+                ] else
+                  const SizedBox(height: 14),
+              ],
             ),
           ),
         ],
@@ -1176,8 +1397,228 @@ class _StatCell extends StatelessWidget {
   }
 }
 
-class _SlimProfileTile extends StatelessWidget {
-  const _SlimProfileTile({
+class _InsightTipCard extends StatelessWidget {
+  const _InsightTipCard({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        color: const Color(0xFFD8F5E4),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: AgapColors.businessGreen.withValues(alpha: 0.22),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: AgapColors.businessGreen.withValues(alpha: 0.08),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          const Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 4,
+            child: ColoredBox(color: AgapColors.businessGreenDeep),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.9),
+                    shape: BoxShape.circle,
+                    boxShadow: [
+                      BoxShadow(
+                        color:
+                            AgapColors.businessGreen.withValues(alpha: 0.12),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  alignment: Alignment.center,
+                  child: Icon(
+                    Icons.lightbulb_outline_rounded,
+                    size: 22,
+                    color: AgapColors.businessGreenDeep,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    message,
+                    softWrap: true,
+                    maxLines: 8,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.inter(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                      height: 1.45,
+                      color: const Color(0xFF14532D),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BizSectionCard extends StatelessWidget {
+  const _BizSectionCard({
+    required this.title,
+    required this.icon,
+    required this.child,
+  });
+
+  final String title;
+  final IconData icon;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      elevation: 4,
+      shadowColor: Colors.black.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(16),
+      color: Colors.white,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(16, 18, 16, 16),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AgapColors.borderSubtle),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [
+              Colors.white,
+              const Color(0xFFFAFBFF).withValues(alpha: 0.9),
+            ],
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Text(
+                  title,
+                  style: GoogleFonts.inter(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w800,
+                    color: AgapColors.businessGreenDeep,
+                  ),
+                ),
+                const Spacer(),
+                Icon(
+                  icon,
+                  size: 20,
+                  color: AgapColors.businessGreenDeep.withValues(alpha: 0.45),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            child,
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _RecentHiresExpandable extends StatefulWidget {
+  const _RecentHiresExpandable({required this.recentHires});
+
+  final List<_RecentHireVm> recentHires;
+
+  @override
+  State<_RecentHiresExpandable> createState() => _RecentHiresExpandableState();
+}
+
+class _RecentHiresExpandableState extends State<_RecentHiresExpandable> {
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final hires = widget.recentHires;
+    final showToggle = hires.length > 3;
+    final shown = _expanded ? hires : hires.take(3).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (var i = 0; i < shown.length; i++) ...[
+          if (i > 0)
+            const Padding(
+              padding: EdgeInsets.only(left: 32, bottom: 6),
+              child: Divider(
+                height: 1,
+                color: Color(0xFFE5E7EB),
+              ),
+            ),
+          _PressScale(
+            child: _RecentHireRow(
+              initials: applicantInitialsFromName(
+                shown[i].name,
+                shown[i].workerId,
+              ),
+              name: shown[i].name,
+              role: shown[i].role,
+              when: shown[i].when,
+              amount: shown[i].amount,
+              stars: shown[i].stars,
+              relationshipTag: shown[i].relationshipTag,
+              dense: true,
+            ),
+          ),
+        ],
+        if (showToggle) ...[
+          const SizedBox(height: 10),
+          Align(
+            alignment: Alignment.center,
+            child: TextButton.icon(
+              onPressed: () => setState(() => _expanded = !_expanded),
+              icon: Icon(
+                _expanded
+                    ? Icons.expand_less_rounded
+                    : Icons.expand_more_rounded,
+                color: AgapColors.businessGreenDeep,
+              ),
+              label: Text(
+                _expanded ? 'Show less' : 'View all (${hires.length})',
+                style: GoogleFonts.inter(
+                  fontWeight: FontWeight.w800,
+                  color: AgapColors.businessGreenDeep,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _ShortcutProfileTile extends StatelessWidget {
+  const _ShortcutProfileTile({
     required this.icon,
     required this.title,
     required this.onTap,
@@ -1189,20 +1630,51 @@ class _SlimProfileTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListTile(
-      dense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 0),
-      leading: Icon(icon, color: AgapColors.businessGreen, size: 22),
-      title: Text(
-        title,
-        style: GoogleFonts.inter(fontWeight: FontWeight.w600, fontSize: 15),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        splashColor: AgapColors.businessGreen.withValues(alpha: 0.08),
+        highlightColor: AgapColors.businessGreen.withValues(alpha: 0.05),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: AgapColors.businessMint.withValues(alpha: 0.65),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: AgapColors.businessGreen.withValues(alpha: 0.12),
+                  ),
+                ),
+                child: Icon(
+                  icon,
+                  color: AgapColors.businessGreenDeep,
+                  size: 22,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  title,
+                  style: GoogleFonts.inter(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 15,
+                  ),
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: AgapColors.textMuted,
+                size: 22,
+              ),
+            ],
+          ),
+        ),
       ),
-      trailing: Icon(
-        Icons.chevron_right_rounded,
-        color: AgapColors.textMuted,
-        size: 22,
-      ),
-      onTap: onTap,
     );
   }
 }
@@ -1215,6 +1687,7 @@ class _RecentHireRow extends StatelessWidget {
     required this.when,
     required this.amount,
     required this.stars,
+    this.relationshipTag,
     this.dense = false,
   });
 
@@ -1224,6 +1697,7 @@ class _RecentHireRow extends StatelessWidget {
   final String when;
   final String amount;
   final int stars;
+  final String? relationshipTag;
   final bool dense;
 
   String get _avatarText {
@@ -1293,6 +1767,35 @@ class _RecentHireRow extends StatelessWidget {
                         color: AgapColors.textMuted,
                       ),
                     ),
+                    if (relationshipTag != null) ...[
+                      const SizedBox(height: 6),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AgapColors.mintSurface,
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: AgapColors.businessGreen
+                                  .withValues(alpha: 0.2),
+                            ),
+                          ),
+                          child: Text(
+                            relationshipTag!,
+                            style: GoogleFonts.inter(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w800,
+                              color: AgapColors.businessGreenDeep,
+                              height: 1.2,
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),

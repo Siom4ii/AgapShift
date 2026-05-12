@@ -404,7 +404,7 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 8, 16, 0),
+              padding: const EdgeInsets.fromLTRB(8, 4, 16, 0),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -426,24 +426,24 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
                   ),
                   Expanded(
                     child: Padding(
-                      padding: const EdgeInsets.only(left: 8, top: 4),
+                      padding: const EdgeInsets.only(left: 8, top: 2),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
                             'Post a Job',
                             style: GoogleFonts.inter(
-                              fontSize: 22,
+                              fontSize: 20,
                               fontWeight: FontWeight.w800,
                               color: _navyTitle,
                               letterSpacing: -0.3,
                             ),
                           ),
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 2),
                           Text(
                             'Fill in the job details',
                             style: GoogleFonts.inter(
-                              fontSize: 14,
+                              fontSize: 13,
                               color: _labelGrey,
                               fontWeight: FontWeight.w500,
                             ),
@@ -455,7 +455,7 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
                 ],
               ),
             ),
-            const Divider(height: 24, thickness: 1, color: _borderField),
+            const Divider(height: 16, thickness: 1, color: _borderField),
             Expanded(
               child: SingleChildScrollView(
                 padding: const EdgeInsets.fromLTRB(20, 0, 20, 28),
@@ -947,49 +947,120 @@ class _BusinessCreateGigScreenState extends State<BusinessCreateGigScreen> {
                                   ],
                                 ),
                               ),
-                              Switch.adaptive(
+                              Switch(
                                 value: _urgent,
-                                activeThumbColor: AgapColors.businessGreen,
                                 onChanged: (v) => setState(() => _urgent = v),
+                                activeThumbColor: AgapColors.businessGreen,
+                                activeTrackColor: AgapColors.businessGreen
+                                    .withValues(alpha: 0.45),
+                                inactiveTrackColor: const Color(0xFFE2E8F0),
+                                inactiveThumbColor: const Color(0xFF94A3B8),
                               ),
                             ],
                           ),
-                          const SizedBox(height: 16),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
+                          const SizedBox(height: 14),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.fromLTRB(14, 14, 12, 12),
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(16),
+                              gradient: const LinearGradient(
+                                begin: Alignment.topLeft,
+                                end: Alignment.bottomRight,
+                                colors: [
+                                  Color(0xFFFFF7ED),
+                                  Color(0xFFFFEDD5),
+                                ],
+                              ),
+                              border: Border.all(
+                                color: const Color(0xFFF59E0B).withValues(
+                                  alpha: 0.55,
+                                ),
+                              ),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: const Color(0xFFF59E0B).withValues(
+                                    alpha: 0.18,
+                                  ),
+                                  blurRadius: 16,
+                                  offset: const Offset(0, 6),
+                                ),
+                              ],
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
                                   children: [
-                                    Text(
-                                      'Boost this post',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.w800,
-                                        color: _navyTitle,
+                                    Container(
+                                      padding: const EdgeInsets.all(8),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.85,
+                                        ),
+                                        borderRadius: BorderRadius.circular(
+                                          12,
+                                        ),
+                                      ),
+                                      child: Icon(
+                                        Icons.bolt_rounded,
+                                        color: Colors.orange.shade800,
+                                        size: 22,
                                       ),
                                     ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      '₱${RevenueStubService.postBoostPhp} · top of worker feeds for '
-                                      '${RevenueStubService.postBoostValidity.inDays} days (optional, demo)',
-                                      style: GoogleFonts.inter(
-                                        fontSize: 12,
-                                        color: _labelGrey,
-                                        fontWeight: FontWeight.w500,
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            'Boost visibility',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w900,
+                                              color: const Color(0xFF9A3412),
+                                            ),
+                                          ),
+                                          const SizedBox(height: 2),
+                                          Text(
+                                            'Get up to ~3× more views at the top of worker feeds.',
+                                            style: GoogleFonts.inter(
+                                              fontSize: 12,
+                                              fontWeight: FontWeight.w600,
+                                              height: 1.35,
+                                              color: const Color(0xFFB45309),
+                                            ),
+                                          ),
+                                        ],
                                       ),
+                                    ),
+                                    Switch(
+                                      value: _wantBoost,
+                                      onChanged: (v) =>
+                                          setState(() => _wantBoost = v),
+                                      activeThumbColor: const Color(0xFFEA580C),
+                                      activeTrackColor: const Color(0xFFEA580C)
+                                          .withValues(alpha: 0.45),
+                                      inactiveTrackColor:
+                                          const Color(0xFFE2E8F0),
+                                      inactiveThumbColor:
+                                          const Color(0xFF94A3B8),
                                     ),
                                   ],
                                 ),
-                              ),
-                              Switch.adaptive(
-                                value: _wantBoost,
-                                activeThumbColor: const Color(0xFF7C3AED),
-                                onChanged: (v) =>
-                                    setState(() => _wantBoost = v),
-                              ),
-                            ],
+                                const SizedBox(height: 8),
+                                Text(
+                                  '₱${RevenueStubService.postBoostPhp} · '
+                                  '${RevenueStubService.postBoostValidity.inDays} days (optional, demo)',
+                                  style: GoogleFonts.inter(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: const Color(0xFF92400E),
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),
